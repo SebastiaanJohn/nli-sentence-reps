@@ -103,3 +103,10 @@ class SNLI(Dataset):
             dict: Item from the dataset at the given index.
         """
         return self.data[index]
+
+if __name__ == '__main__':
+    dataset = SNLI(root='data', split='valid')
+    print(dataset[0])
+    print(dataset[0]['premise'].shape)
+    print(dataset[0]['hypothesis'].shape)
+    print(dataset[1]['premise'].shape)
