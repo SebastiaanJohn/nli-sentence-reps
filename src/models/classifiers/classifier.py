@@ -8,7 +8,6 @@ class Classifier(torch.nn.Module):
 
     def __init__(
         self,
-        encoder: torch.nn.Module,
         embedding_dim: int = 300,
         hidden_dim: int = 512,
         num_classes: int = 3
@@ -26,7 +25,6 @@ class Classifier(torch.nn.Module):
                 Defaults to 3.
         """
         super().__init__()
-        self.encoder = encoder
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
         self.num_classes = num_classes
@@ -37,7 +35,7 @@ class Classifier(torch.nn.Module):
             torch.nn.Linear(self.hidden_dim, self.num_classes)
         )
 
-    def forward(self, premise: torch.Tensor, hypothesis: torch.Tensor) -> torch.Tensor:
+    def forward(self, encoded_premise: torch.Tensor, encoded_hypothesis: torch.Tensor) -> torch.Tensor:
         """Forward pass of the model.
 
         3 matching methods are applied to extract relations between u and v:
@@ -48,16 +46,12 @@ class Classifier(torch.nn.Module):
         The resulting 4 * d-dimensional vector is then passed through a two-layer MLP.
 
         Args:
-            premise (torch.Tensor): Tensor of premise embeddings.
-            hypothesis (torch.Tensor): Tensor of hypothesis embeddings.
+            encoded_premise (torch.Tensor): Tensor of premise embeddings.
+            encoded_hypothesis (torch.Tensor): Tensor of hypothesis embeddings.
 
         Returns:
             torch.Tensor: Tensor of concatenated sentence embeddings (u, v, u * v, |u - v|)
         """
-        # Encode the premise and hypothesis sentences.
-        encoded_premise = self.encoder(premise)
-        encoded_hypothesis = self.encoder(hypothesis)
-
         # Concatenate the premise and hypothesis embeddings (u, v)
         concat = torch.cat((encoded_premise, encoded_hypothesis), dim=1)
 

@@ -1,22 +1,28 @@
 """The train module contains the train function."""
 
+import argparse
 import logging
 from pathlib import Path
 
 import torch
+import torch.optim as optim
 from torch import nn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
+from .data import SNLI
+from .models.classifiers import Classifier
+from .models.encoders import BaselineEncoder, UniLSTMEncoder
+
 
 def train_step(
     encoder: nn.Module,
     classifier: nn.Module,
-    optimizer: torch.optim.Optimizer,
+    optimizer: optim.Optimizer,
     criterion: nn.Module,
     batch: torch.Tensor,
-    device: str,
+    device: torch.device,
     ) -> float:
     """Perform a single training step.
 
@@ -65,7 +71,7 @@ def validate(
     classifier: nn.Module,
     criterion: nn.Module,
     valid_data: DataLoader,
-    device: str,
+    device: torch.device,
     ) -> float:
     """Evaluate the model on the development data.
 
@@ -120,7 +126,7 @@ def train(
     train_data: DataLoader,
     valid_data: DataLoader,
     epochs: int,
-    device: str,
+    device: torch.device
 ) -> None:
     """Train a model on the training data and evaluate on the development data.
 
@@ -172,8 +178,72 @@ def train(
             logging.info("Saving the best model")
 
             # Save the model
-            Path("models").mkdir(exist_ok=True)
-            torch.save(encoder.state_dict(), "models/encoder_best.pt")
-            torch.save(classifier.state_dict(), "models/classifier_best.pt")
+            model_path = Path("models")
+            model_path.mkdir(exist_ok=True)
+            torch.save(encoder.state_dict(), model_path / "encoder_best.pt")
+            torch.save(classifier.state_dict(), model_path / "classifier_best.pt")
 
     writer.close()
+
+def get_encoder(args) -> nn.Module:
+    """Get the sentence encoder."""
+    if args.encoder == "baseline":
+        encoder = BaselineEncoder(args.embeddings)
+    elif args.encoder == "uni_lstm":
+        encoder = UniLSTMEncoder(args.embeddings, args.hidden_size)
+    else:
+        error = f"Unknown encoder: {args.encoder}"
+        raise ValueError(error)
+
+    return encoder
+
+def main(args):
+    """Main function for training and evaluating the model."""
+    # Set the random seed
+    torch.manual_seed(args.seed)
+
+    # Set the device
+    device = torch.device(args.device)
+
+    # Load the training data
+    train_data = SNLI(args.data, split="train", glove_embedding_size=args.glove_embedding_size)
+    train_dataloader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
+
+    # Load the validation data
+    valid_data = SNLI(args.data, split="valid", vocab=train_data.vocab)
+    valid_dataloader = DataLoader(valid_data, batch_size=args.batch_size, shuffle=False)
+
+    # Load the sentence encoder
+    encoder = get_encoder(args)
+    classifier = Classifier(args.hidden_size)
+
+    # Move the model to the device
+    encoder.to(device)
+    classifier.to(device)
+
+    # Define the optimizer
+    optimizer = optim.Adam(
+        list(encoder.parameters()) + list(classifier.parameters()),
+        lr=args.learning_rate,
+    )
+
+    # Define the loss function
+    criterion = nn.CrossEntropyLoss()
+
+    # Train the model
+    train(encoder, classifier, optimizer, criterion, train_dataloader, valid_dataloader, args.epochs, device)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data", type=str, default="data")
+    parser.add_argument("--glove_embedding_size", type=str, default="840B")
+    parser.add_argument("--encoder", type=str, default="baseline")
+    parser.add_argument("--hidden_size", type=int, default=300)
+    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--learning_rate", type=float, default=0.001)
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
+
+    args = parser.parse_args()
+
+    main(args)

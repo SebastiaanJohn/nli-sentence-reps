@@ -29,7 +29,7 @@ class SNLI(Dataset):
         split: str = 'train',
         embedding_dim: int = 300,
         glove_embedding_size: str = '840B',
-        vocab: dict[str, int] | None = None,
+        vocab: dict[str, torch.Tensor | dict[str, int]] | None = None,
         subset: int | None = None,
         ) -> None:
         """Initialize the dataset.
@@ -42,8 +42,9 @@ class SNLI(Dataset):
                 Defaults to 300.
             glove_embedding_size (str, optional): Size of the GloVe embeddings
                 to use. Defaults to '840B'.
-            vocab (dict[str, int], optional): Vocabulary to use for the validation and
-                test splits. Defaults to None.
+            vocab (dict[str, torch.Tensor | dict[str, int]], optional): Vocabulary
+                containing the word embeddings and word-to-index mapping. Defaults
+                to None.
             subset (int, optional): Number of examples to use from the dataset.
         """
         if split not in {'train', 'valid', 'test'}:
@@ -63,9 +64,9 @@ class SNLI(Dataset):
         self.data = self._load_data(split, subset)
 
         if vocab is None: # Build the vocabulary from the training data
-            self.embedding, self.token_to_idx = self._build_vocabulary()
-        else: # Use the training vocabulary if the split is valid or test
-            self.embedding, self.token_to_idx = vocab["embedding"], vocab["token_to_idx"]
+            self.vocab = self._build_vocabulary()
+        else: # Use the vocabulary from the validation or test data
+            self.vocab = vocab
 
     def _load_data(self, split: str, subset: int | None) -> list[dict[str, list[str] | torch.Tensor]]:
         """Load the dataset.
@@ -103,8 +104,13 @@ class SNLI(Dataset):
 
         return data
 
-    def _build_vocabulary(self) -> tuple[torch.Tensor, dict[str, int]]:
-        """Build the vocabulary from the dataset."""
+    def _build_vocabulary(self) -> dict[str, torch.Tensor | dict[str, int]]:
+        """Build the vocabulary from the dataset.
+
+        Returns:
+            dict[str, torch.Tensor | dict[str, int]]: Dictionary containing the
+                aligned embedding matrix and the token to index mapping.
+        """
         # Create a default dictionary for the token to index mapping
         token_to_idx = defaultdict(lambda: len(token_to_idx))
         token_to_idx["<PAD>"] = 0  # Adding a padding token
@@ -123,7 +129,10 @@ class SNLI(Dataset):
         # Convert the list of aligned embeddings to a torch.Tensor
         aligned_embeddings = torch.stack(aligned_embeddings)
 
-        return aligned_embeddings, token_to_idx
+        return {
+            "embedding": aligned_embeddings,
+            "token_to_idx": token_to_idx
+        }
 
 
     def _tokenize(self, text: str) -> list[str]:
@@ -154,7 +163,3 @@ class SNLI(Dataset):
         """
         return self.data[index]
 
-if __name__ == '__main__':
-    dataset = SNLI(root='data', split='train', subset=1000)
-    print(len(dataset))
-    print(dataset[0])
