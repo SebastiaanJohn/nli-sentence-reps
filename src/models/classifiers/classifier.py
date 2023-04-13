@@ -33,7 +33,7 @@ class Classifier(torch.nn.Module):
 
         self.mlp = torch.nn.Sequential(
             torch.nn.Linear(self.embedding_dim, self.hidden_dim),
-            torch.nn.ReLU(),
+            torch.nn.Tanh(),
             torch.nn.Linear(self.hidden_dim, self.num_classes)
         )
 
