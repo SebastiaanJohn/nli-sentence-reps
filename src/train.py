@@ -7,15 +7,17 @@ from pathlib import Path
 import torch
 import torch.optim as optim
 from torch import nn
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
-from .data import SNLIDataset
-from .data.utils import snli_collate_fn
-from .models import NLIModel
-from .models.classifiers import Classifier
-from .models.encoders import BaselineEncoder, LSTMEncoder
+from src.data import SNLIDataset
+from src.data.utils import snli_collate_fn
+from src.eval import evaluate
+from src.models import NLIModel
+from src.models.classifiers import Classifier
+from src.models.encoders import BaselineEncoder, LSTMEncoder
 
 
 def train_step(
@@ -62,54 +64,10 @@ def train_step(
 
     return loss.item()
 
-def validate(
-    model: nn.Module,
-    criterion: nn.Module,
-    valid_data: DataLoader,
-    device: torch.device,
-    ) -> float:
-    """Evaluate the model on the development data.
-
-    Args:
-        model: The model (encoder + classifier).
-        criterion: The loss function.
-        valid_data: The development data.
-        device: The device to use.
-
-    Returns:
-        The average loss on the development data.
-    """
-    # Set the model to evaluation mode
-    model.eval()
-
-    # Keep track of the validation loss
-    valid_loss = 0.0
-
-    for batch in tqdm(valid_data, desc="Validating"):
-        # Unpack the batch
-        premise, hypothesis, label = batch
-
-        # Move the batch to the device
-        premise = premise.to(device)
-        hypothesis = hypothesis.to(device)
-        label = label.to(device)
-
-        # Compute the logits
-        logits = model(premise, hypothesis)
-
-        # Compute the loss
-        loss = criterion(logits, label)
-
-        valid_loss += loss.item()
-
-    # Compute the average validation loss
-    valid_loss = valid_loss / len(valid_data)
-
-    return valid_loss
-
 def train(
     model: nn.Module,
     optimizer: torch.optim.Optimizer,
+    scheduler: ReduceLROnPlateau,
     criterion: nn.Module,
     train_loader: DataLoader,
     valid_loader: DataLoader,
@@ -122,6 +80,7 @@ def train(
     Args:
         model (nn.Module): The model (encoder + classifier).
         optimizer (torch.optim.Optimizer): The optimizer.
+        scheduler (ReduceLROnPlateau): The learning rate scheduler.
         criterion (nn.Module): The loss function.
         train_loader (DataLoader): The training data.
         valid_loader (DataLoader): The development data.
@@ -132,6 +91,7 @@ def train(
     model.to(device)
 
     best_valid_loss = float("inf")
+    best_valid_accuracy = 0.0
     writer = SummaryWriter()
 
     for epoch in range(epochs):
@@ -148,7 +108,7 @@ def train(
             train_loss += loss
 
         # Compute the average training loss
-        train_loss = train_loss / len(train_loader)
+        train_loss = train_loss / len(train_loader.dataset)
 
         logging.info(f"Train loss: {train_loss:.3f}")
 
@@ -156,21 +116,34 @@ def train(
         writer.add_scalar("Loss/train", train_loss, epoch)
 
         # Evaluate the model on the development data
-        valid_loss = validate(model, criterion, valid_loader, device)
+        valid_loss, valid_accuracy = evaluate(model, criterion, valid_loader, device)
 
         logging.info(f"Valid loss: {valid_loss:.3f}")
+        logging.info(f"Accuracy: {valid_accuracy:.3f}")
 
-        # Write the validation loss to TensorBoard
+        # Update the learning rate
+        scheduler.step(valid_accuracy)
+
+        # Write the validation loss and accuracy to TensorBoard
         writer.add_scalar("Loss/valid", valid_loss, epoch)
+        writer.add_scalar("Accuracy/valid", valid_accuracy, epoch)
 
         if valid_loss < best_valid_loss:
             best_valid_loss = valid_loss
+            best_valid_accuracy = valid_accuracy
             logging.info("Saving the best model")
 
             # Save the model
-            model_path = Path("models").joinpath(args.encoder)
+            model_path = Path("models")
             model_path.mkdir(exist_ok=True)
-            torch.save(model.state_dict(), model_path / "best_model.pt")
+
+            encoder_path = model_path / args.encoder
+            encoder_path.mkdir(exist_ok=True)
+
+            torch.save(model.state_dict(), encoder_path / "best_model.pt")
+
+    logging.info(f"Best valid loss: {best_valid_loss:.3f}")
+    logging.info(f"Best valid accuracy: {best_valid_accuracy:.3f}")
 
     writer.close()
 
@@ -228,7 +201,10 @@ def main(args):
     model = NLIModel(encoder, classifier)
 
     # Define the optimizer
-    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+    optimizer = optim.SGD(model.parameters(), lr=0.1, weight_decay=1e-4)
+
+    # Define the learning rate scheduler
+    scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=1/5, patience=0, min_lr=1e-5, verbose=True)
 
     # Define the loss function
     criterion = nn.CrossEntropyLoss()
@@ -236,7 +212,24 @@ def main(args):
     logging.info("Training the model...")
 
     # Train the model
-    train(model, optimizer, criterion, train_dataloader, valid_dataloader, args.epochs, device, args)
+    train(model, optimizer, scheduler, criterion, train_dataloader, valid_dataloader, args.epochs, device, args)
+
+    # Load the best model
+    model.load_state_dict(torch.load(f"models/{args.encoder}/best_model.pt"))
+
+    # Evaluate the model on the test data
+    test_data = SNLIDataset(
+        args.data,
+        split="test",
+        vocab=train_data.vocab,
+        glove_embedding_size=args.glove_embedding_size,
+        subset=args.subset)
+    test_dataloader = DataLoader(
+        test_data, batch_size=args.batch_size, shuffle=False, collate_fn=snli_collate_fn)
+    test_loss, test_accuracy = evaluate(model, criterion, test_dataloader, device)
+
+    logging.info(f"Test loss: {test_loss:.3f}")
+    logging.info(f"Test accuracy: {test_accuracy:.3f}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -244,9 +237,9 @@ if __name__ == "__main__":
     parser.add_argument("--embeddings_dim", type=int, default=300)
     parser.add_argument("--glove_embedding_size", type=str, default="840B")
     parser.add_argument("--subset", type=int, default=None)
-    parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "uni_lstm"])
+    parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "lstm"])
     parser.add_argument("--hidden_size", type=int, default=300)
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--learning_rate", type=float, default=0.001)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")

@@ -1,4 +1,7 @@
-torch>=2.0
+torch
+torchvision
+torchtext
 ruff
-scipy
+spacy
 tqdm
+tensorboard
