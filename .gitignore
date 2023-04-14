@@ -1,5 +1,7 @@
 data/snli_1.0
 .vector_cache
+runs/*
+models/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

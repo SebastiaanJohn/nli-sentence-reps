@@ -1,4 +1,5 @@
 """Encoder modules for the model."""
 
 from .baseline import BaselineEncoder
-from .uni_lstm import UniLSTMEncoder
+from .bi_lstm import BiLSTMEncoder
+from .lstm import LSTMEncoder

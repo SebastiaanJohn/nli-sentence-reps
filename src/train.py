@@ -11,14 +11,15 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
-from .data import SNLI
+from .data import SNLIDataset
+from .data.utils import snli_collate_fn
+from .models import NLIModel
 from .models.classifiers import Classifier
-from .models.encoders import BaselineEncoder, UniLSTMEncoder
+from .models.encoders import BaselineEncoder, LSTMEncoder
 
 
 def train_step(
-    encoder: nn.Module,
-    classifier: nn.Module,
+    model: nn.Module,
     optimizer: optim.Optimizer,
     criterion: nn.Module,
     batch: torch.Tensor,
@@ -27,8 +28,7 @@ def train_step(
     """Perform a single training step.
 
     Args:
-        encoder: The sentence encoder.
-        classifier: The classifier.
+        model: The model (encoder + classifier).
         optimizer: The optimizer.
         criterion: The loss function.
         batch: The batch of data.
@@ -48,12 +48,8 @@ def train_step(
     # Zero out the gradients
     optimizer.zero_grad()
 
-    # Compute the sentence representations
-    premise_rep = encoder(premise)
-    hypothesis_rep = encoder(hypothesis)
-
-    # Classify the premise-hypothesis pairs
-    logits = classifier(premise_rep, hypothesis_rep)
+    # Compute the logits
+    logits = model(premise, hypothesis)
 
     # Compute the loss
     loss = criterion(logits, label)
@@ -67,8 +63,7 @@ def train_step(
     return loss.item()
 
 def validate(
-    encoder: nn.Module,
-    classifier: nn.Module,
+    model: nn.Module,
     criterion: nn.Module,
     valid_data: DataLoader,
     device: torch.device,
@@ -76,8 +71,7 @@ def validate(
     """Evaluate the model on the development data.
 
     Args:
-        encoder: The sentence encoder.
-        classifier: The classifier.
+        model: The model (encoder + classifier).
         criterion: The loss function.
         valid_data: The development data.
         device: The device to use.
@@ -86,13 +80,12 @@ def validate(
         The average loss on the development data.
     """
     # Set the model to evaluation mode
-    encoder.eval()
-    classifier.eval()
+    model.eval()
 
     # Keep track of the validation loss
     valid_loss = 0.0
 
-    for batch in valid_data:
+    for batch in tqdm(valid_data, desc="Validating"):
         # Unpack the batch
         premise, hypothesis, label = batch
 
@@ -101,12 +94,8 @@ def validate(
         hypothesis = hypothesis.to(device)
         label = label.to(device)
 
-        # Compute the sentence representations
-        premise_rep = encoder(premise)
-        hypothesis_rep = encoder(hypothesis)
-
-        # Classify the premise-hypothesis pairs
-        logits = classifier(premise_rep, hypothesis_rep)
+        # Compute the logits
+        logits = model(premise, hypothesis)
 
         # Compute the loss
         loss = criterion(logits, label)
@@ -119,56 +108,57 @@ def validate(
     return valid_loss
 
 def train(
-    encoder: nn.Module,
-    classifier: nn.Module,
+    model: nn.Module,
     optimizer: torch.optim.Optimizer,
     criterion: nn.Module,
-    train_data: DataLoader,
-    valid_data: DataLoader,
+    train_loader: DataLoader,
+    valid_loader: DataLoader,
     epochs: int,
-    device: torch.device
+    device: torch.device,
+    args: argparse.Namespace,
 ) -> None:
     """Train a model on the training data and evaluate on the development data.
 
     Args:
-        encoder: The sentence encoder.
-        classifier: The classifier.
-        optimizer: The optimizer.
-        criterion: The loss function.
-        train_data: The training data.
-        valid_data: The development data.
-        epochs: The number of epochs to train for.
-        device: The device to use.
+        model (nn.Module): The model (encoder + classifier).
+        optimizer (torch.optim.Optimizer): The optimizer.
+        criterion (nn.Module): The loss function.
+        train_loader (DataLoader): The training data.
+        valid_loader (DataLoader): The development data.
+        epochs (int): The number of epochs to train for.
+        device (torch.device): The device to use.
+        args (argparse.Namespace): The command line arguments.
     """
-    encoder.to(device)
-    classifier.to(device)
+    model.to(device)
 
     best_valid_loss = float("inf")
     writer = SummaryWriter()
 
     for epoch in range(epochs):
         logging.info(f"Epoch {epoch + 1} / {epochs}")
-        logging.info("-" * 10)
 
         # Set the model to training mode
-        encoder.train()
-        classifier.train()
+        model.train()
 
         # Keep track of the training loss
         train_loss = 0.0
 
-        for batch in tqdm(train_data, desc=f"Epoch {epoch + 1}"):
-            loss = train_step(encoder, classifier, optimizer, criterion, batch, device)
+        for batch in tqdm(train_loader, desc=f"Epoch {epoch + 1}"):
+            loss = train_step(model, optimizer, criterion, batch, device)
             train_loss += loss
 
         # Compute the average training loss
-        train_loss = train_loss / len(train_data)
+        train_loss = train_loss / len(train_loader)
+
+        logging.info(f"Train loss: {train_loss:.3f}")
 
         # Write the train loss to TensorBoard
         writer.add_scalar("Loss/train", train_loss, epoch)
 
         # Evaluate the model on the development data
-        valid_loss = validate(encoder, classifier, criterion, valid_data, device)
+        valid_loss = validate(model, criterion, valid_loader, device)
+
+        logging.info(f"Valid loss: {valid_loss:.3f}")
 
         # Write the validation loss to TensorBoard
         writer.add_scalar("Loss/valid", valid_loss, epoch)
@@ -178,27 +168,31 @@ def train(
             logging.info("Saving the best model")
 
             # Save the model
-            model_path = Path("models")
+            model_path = Path("models").joinpath(args.encoder)
             model_path.mkdir(exist_ok=True)
-            torch.save(encoder.state_dict(), model_path / "encoder_best.pt")
-            torch.save(classifier.state_dict(), model_path / "classifier_best.pt")
+            torch.save(model.state_dict(), model_path / "best_model.pt")
 
     writer.close()
 
 def get_encoder(args) -> nn.Module:
     """Get the sentence encoder."""
-    if args.encoder == "baseline":
-        encoder = BaselineEncoder(args.embeddings)
-    elif args.encoder == "uni_lstm":
-        encoder = UniLSTMEncoder(args.embeddings, args.hidden_size)
-    else:
-        error = f"Unknown encoder: {args.encoder}"
-        raise ValueError(error)
+    match args.encoder:
+        case "baseline":
+            encoder = BaselineEncoder()
+        case "uni_lstm":
+            encoder = LSTMEncoder(args.embeddings, args.hidden_size)
+        case _:
+            error = f"Unknown encoder: {args.encoder}"
+            raise ValueError(error)
 
     return encoder
 
 def main(args):
     """Main function for training and evaluating the model."""
+    logging.info(f"Args: {args}")
+
+    logging.info("Loading the data...")
+
     # Set the random seed
     torch.manual_seed(args.seed)
 
@@ -206,44 +200,63 @@ def main(args):
     device = torch.device(args.device)
 
     # Load the training data
-    train_data = SNLI(args.data, split="train", glove_embedding_size=args.glove_embedding_size)
-    train_dataloader = DataLoader(train_data, batch_size=args.batch_size, shuffle=True)
+    train_data = SNLIDataset(
+        args.data,
+        split="train",
+        glove_embedding_size=args.glove_embedding_size,
+        subset=args.subset)
+    train_dataloader = DataLoader(
+        train_data, batch_size=args.batch_size, shuffle=True, collate_fn=snli_collate_fn)
 
     # Load the validation data
-    valid_data = SNLI(args.data, split="valid", vocab=train_data.vocab)
-    valid_dataloader = DataLoader(valid_data, batch_size=args.batch_size, shuffle=False)
+    valid_data = SNLIDataset(
+        args.data,
+        split="valid",
+        vocab=train_data.vocab,
+        glove_embedding_size=args.glove_embedding_size,
+        subset=args.subset)
+    valid_dataloader = DataLoader(
+        valid_data, batch_size=args.batch_size, shuffle=False, collate_fn=snli_collate_fn)
+
+    logging.info("Building the model...")
 
     # Load the sentence encoder
-    encoder = get_encoder(args)
+    encoder = LSTMEncoder(args.embeddings_dim, args.hidden_size)
     classifier = Classifier(args.hidden_size)
 
-    # Move the model to the device
-    encoder.to(device)
-    classifier.to(device)
+    # Define the model
+    model = NLIModel(encoder, classifier)
 
     # Define the optimizer
-    optimizer = optim.Adam(
-        list(encoder.parameters()) + list(classifier.parameters()),
-        lr=args.learning_rate,
-    )
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
     # Define the loss function
     criterion = nn.CrossEntropyLoss()
 
+    logging.info("Training the model...")
+
     # Train the model
-    train(encoder, classifier, optimizer, criterion, train_dataloader, valid_dataloader, args.epochs, device)
+    train(model, optimizer, criterion, train_dataloader, valid_dataloader, args.epochs, device, args)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--data", type=str, default="data")
+    parser.add_argument("--embeddings_dim", type=int, default=300)
     parser.add_argument("--glove_embedding_size", type=str, default="840B")
-    parser.add_argument("--encoder", type=str, default="baseline")
+    parser.add_argument("--subset", type=int, default=None)
+    parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "uni_lstm"])
     parser.add_argument("--hidden_size", type=int, default=300)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--learning_rate", type=float, default=0.001)
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     main(args)

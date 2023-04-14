@@ -1,3 +1,3 @@
 """Data module."""
 
-from .dataset import SNLI
+from .dataset import SNLIDataset

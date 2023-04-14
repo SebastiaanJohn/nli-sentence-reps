@@ -6,6 +6,7 @@ from itertools import islice
 from pathlib import Path
 
 import torch
+import torch.nn as nn
 from spacy.lang.en import English
 from torch.utils.data import Dataset
 from torchtext.vocab import GloVe
@@ -13,7 +14,7 @@ from torchtext.vocab import GloVe
 
 nlp = English()
 
-class SNLI(Dataset):
+class SNLIDataset(Dataset):
     """SNLI dataset class.
 
     The dataset consists of the following fields:
@@ -68,6 +69,9 @@ class SNLI(Dataset):
         else: # Use the vocabulary from the validation or test data
             self.vocab = vocab
 
+        self.embedding = nn.Embedding.from_pretrained(self.vocab["embedding"])
+        self.token_to_idx = self.vocab["token_to_idx"]
+
     def _load_data(self, split: str, subset: int | None) -> list[dict[str, list[str] | torch.Tensor]]:
         """Load the dataset.
 
@@ -87,18 +91,17 @@ class SNLI(Dataset):
                     f"using the script in the data directory of the repository."
             raise FileNotFoundError(error)
 
-        with open(data_file, 'r') as f:
-            raw_data = [json.loads(line) for line in f]
-
         # Generator that yields the required information from the raw data
         def data_gen():
-            for item in raw_data:
-                if item["gold_label"] != "-":
-                    yield {
-                        "premise": self._tokenize(item["sentence1"]),
-                        "hypothesis": self._tokenize(item["sentence2"]),
-                        "label": torch.tensor(self.label_mapping[item["gold_label"]]),
-                    }
+            with data_file.open('r') as f:
+                for line in f:
+                    item = json.loads(line)
+                    if item["gold_label"] != "-":
+                        yield {
+                            "premise": self._tokenize(item["sentence1"]),
+                            "hypothesis": self._tokenize(item["sentence2"]),
+                            "label": torch.tensor(self.label_mapping[item["gold_label"]]),
+                        }
 
         data = list(islice(data_gen(), subset)) if subset else list(data_gen())
 
@@ -114,10 +117,14 @@ class SNLI(Dataset):
         # Create a default dictionary for the token to index mapping
         token_to_idx = defaultdict(lambda: len(token_to_idx))
         token_to_idx["<PAD>"] = 0  # Adding a padding token
+        token_to_idx["<UNK>"] = 1  # Adding an unknown token
+
+        # Compute the average embedding for the unknown token
+        unk_embedding = self.glove.vectors.mean(dim=0)
 
         # Initialize the aligned embedding matrix with the size of the vocabulary
         # and the GloVe embedding dimension
-        aligned_embeddings = [self.glove["<PAD>"]]  # Initialize with padding embedding
+        aligned_embeddings = [self.glove["<PAD>"], unk_embedding]
 
         for item in self.data:
             for text_field in ["premise", "hypothesis"]:
@@ -152,14 +159,38 @@ class SNLI(Dataset):
         """Return the length of the dataset."""
         return len(self.data)
 
-    def __getitem__(self, index: int) -> dict:
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return an item from the dataset.
 
         Args:
             index (int): Index of the item to return.
 
         Returns:
-            dict: Item from the dataset at the given index.
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Premise embeddings, hypothesis embeddings, and label.
         """
-        return self.data[index]
+        item = self.data[index]
+        premise_indices = torch.tensor(
+            [self.token_to_idx.get(token, 1) for token in item['premise']]
+        )
+        hypothesis_indices = torch.tensor(
+            [self.token_to_idx.get(token, 1) for token in item['hypothesis']]
+        )
+        label = item['label']
 
+        premise_embeddings = self.embedding(premise_indices)
+        hypothesis_embeddings = self.embedding(hypothesis_indices)
+
+        return premise_embeddings, hypothesis_embeddings, label
+
+
+if __name__ == "__main__":
+    import time
+
+    from torch.utils.data import DataLoader
+    start = time.time()
+    dataset = SNLIDataset(root='data', subset=1000)
+    snli_dataloader = DataLoader(dataset, batch_size=100, shuffle=True, collate_fn=snli_collate_fn)
+
+    for batch in snli_dataloader:
+        premise, hypothesis, label = batch
+        print(premise.shape, hypothesis.shape, label.shape)
