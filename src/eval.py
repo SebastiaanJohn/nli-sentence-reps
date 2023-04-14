@@ -59,7 +59,7 @@ def evaluate(
             correct_predictions += (predictions == label).sum().item()
 
         # Compute the average evaluation loss
-        eval_loss = eval_loss / len(eval_data.dataset)
+        eval_loss = eval_loss / len(eval_data)
 
         # Compute the accuracy
         accuracy = correct_predictions / len(eval_data.dataset)

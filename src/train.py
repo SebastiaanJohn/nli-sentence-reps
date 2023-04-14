@@ -17,7 +17,7 @@ from src.data.utils import snli_collate_fn
 from src.eval import evaluate
 from src.models import NLIModel
 from src.models.classifiers import Classifier
-from src.models.encoders import BaselineEncoder, LSTMEncoder
+from src.models.encoders import BaselineEncoder, BiLSTMEncoder, LSTMEncoder
 
 
 def train_step(
@@ -108,7 +108,7 @@ def train(
             train_loss += loss
 
         # Compute the average training loss
-        train_loss = train_loss / len(train_loader.dataset)
+        train_loss = train_loss / len(train_loader)
 
         logging.info(f"Train loss: {train_loss:.3f}")
 
@@ -149,14 +149,17 @@ def train(
 
 def get_encoder(args) -> nn.Module:
     """Get the sentence encoder."""
-    match args.encoder:
-        case "baseline":
-            encoder = BaselineEncoder()
-        case "uni_lstm":
-            encoder = LSTMEncoder(args.embeddings, args.hidden_size)
-        case _:
-            error = f"Unknown encoder: {args.encoder}"
-            raise ValueError(error)
+    if args.encoder == "baseline":
+        encoder = BaselineEncoder()
+    elif args.encoder == "lstm":
+        encoder = LSTMEncoder(args.embeddings_dim, args.hidden_size)
+    elif args.encoder == "bilstm":
+        encoder = BiLSTMEncoder(args.embeddings_dim, args.hidden_size)
+    elif args.encoder == "bilstm-max":
+        encoder = BiLSTMEncoder(args.embeddings_dim, args.hidden_size, max_pooling=True)
+    else:
+        error = f"Unknown encoder: {args.encoder}"
+        raise ValueError(error)
 
     return encoder
 
@@ -193,15 +196,19 @@ def main(args):
 
     logging.info("Building the model...")
 
-    # Load the sentence encoder
-    encoder = LSTMEncoder(args.embeddings_dim, args.hidden_size)
+    # Load the sentence encoder and the classifier
+    encoder = get_encoder(args)
     classifier = Classifier(args.hidden_size)
 
     # Define the model
     model = NLIModel(encoder, classifier)
 
+    # Load the model from a checkpoint if one is provided
+    if args.checkpoint:
+        model.load_state_dict(torch.load(args.checkpoint))
+
     # Define the optimizer
-    optimizer = optim.SGD(model.parameters(), lr=0.1, weight_decay=1e-4)
+    optimizer = optim.SGD(model.parameters(), lr=args.learning_rate, weight_decay=1e-4)
 
     # Define the learning rate scheduler
     scheduler = ReduceLROnPlateau(optimizer, mode='max', factor=1/5, patience=0, min_lr=1e-5, verbose=True)
@@ -233,17 +240,19 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, default="data")
-    parser.add_argument("--embeddings_dim", type=int, default=300)
-    parser.add_argument("--glove_embedding_size", type=str, default="840B")
-    parser.add_argument("--subset", type=int, default=None)
-    parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "lstm"])
-    parser.add_argument("--hidden_size", type=int, default=300)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--learning_rate", type=float, default=0.001)
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--data", type=str, default="data", help="Path to the data directory")
+    parser.add_argument("--embeddings_dim", type=int, default=300, help="Embeddings dimension")
+    parser.add_argument("--glove_embedding_size", type=str, default="840B", choices=["6B", "42B", "840B"], help="GloVe embedding size")
+    parser.add_argument("--subset", type=int, default=None, help="Subset of the data to use for training")
+    parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "lstm", "bilstm", "bilstm-max"], help="Sentence encoder")
+    parser.add_argument("--hidden_size", type=int, default=300, help="Hidden size of the LSTM")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+    parser.add_argument("--learning_rate", type=float, default=0.1, help="Learning rate")
+    parser.add_argument("--epochs", type=int, default=30, help="Number of epochs")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--checkpoint", type=str, default=None, help="Path to a checkpoint to load the model from")
+
     args = parser.parse_args()
 
     logging.basicConfig(
