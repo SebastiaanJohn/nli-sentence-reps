@@ -224,7 +224,7 @@ if __name__ == "__main__":
 
     # SentEval parameters
     parser.add_argument("--senteval", action="store_true", help="Use the SentEval evaluation metric")
-    parser.add_argument("--senteval_data_path", type=str, default="SentEval/data/", help="Path to the SentEval data directory")
+    parser.add_argument("--senteval_data_path", type=str, default="data", help="Path to the SentEval data directory")
     parser.add_argument("--kfold", type=int, default=5, help="Number of folds for cross-validation")
     parser.add_argument("--no_pytorch", action="store_false", dest="use_pytorch", help="Use PyTorch for SentEval")
 
@@ -233,7 +233,7 @@ if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%d %H:%M:%S",
+        datefmt="%H:%M:%S",
     )
 
     main(args)

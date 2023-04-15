@@ -3,6 +3,7 @@ data/snli_1.0
 runs/*
 models/*
 SentEval/
+data/downstream/*/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -57,3 +58,6 @@ docs/_build/
 
 # MacOS
 .DS_Store
+
+.vector_cache/
+.vscode/
