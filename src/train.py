@@ -6,18 +6,18 @@ from pathlib import Path
 
 import torch
 import torch.optim as optim
+from eval import evaluate
 from torch import nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
-from src.data import SNLIDataset
-from src.data.utils import snli_collate_fn
-from src.eval import evaluate
-from src.models import NLIModel
-from src.models.classifiers import Classifier
-from src.models.utils import get_encoder
+from data.dataset import SNLIDataset
+from data.utils import snli_collate_fn
+from models.classifiers import Classifier
+from models.net import NLIModel
+from models.utils import get_encoder
 
 
 def train_step(
@@ -44,7 +44,9 @@ def train_step(
 
     # Move the batch to the device
     premise = premise.to(device)
+    premise_lengths = premise_lengths.to(device)
     hypothesis = hypothesis.to(device)
+    hypothesis_lengths = hypothesis_lengths.to(device)
     label = label.to(device)
 
     # Zero out the gradients

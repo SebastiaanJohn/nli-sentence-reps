@@ -2,9 +2,9 @@
 
 from torch import nn
 
-from src.models.encoders.baseline import BaselineEncoder
-from src.models.encoders.bilstm import BiLSTMEncoder
-from src.models.encoders.lstm import LSTMEncoder
+from models.encoders.baseline import BaselineEncoder
+from models.encoders.bilstm import BiLSTMEncoder
+from models.encoders.lstm import LSTMEncoder
 
 
 def get_encoder(embeddings, args) -> nn.Module:

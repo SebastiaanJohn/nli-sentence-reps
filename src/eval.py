@@ -1,25 +1,21 @@
 """Evaluation and prediction functions."""
-
 import argparse
 import logging
 
 import numpy as np
+import senteval
 import torch
-from spacy.lang.en import English
 from torch import nn
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-import senteval
-from src.data import SNLIDataset
-from src.data.utils import snli_collate_fn
-from src.models import NLIModel
-from src.models.classifiers import Classifier
-from src.models.utils import get_encoder
+from data.dataset import SNLIDataset
+from data.utils import snli_collate_fn
+from models.classifiers import Classifier
+from models.net import NLIModel
+from models.utils import get_encoder
 
-
-nlp = English()
 
 def evaluate(
     model: nn.Module,
@@ -53,7 +49,9 @@ def evaluate(
 
             # Move the batch to the device
             premise = premise.to(device)
+            premise_lengths = premise_lengths.to(device)
             hypothesis = hypothesis.to(device)
+            hypothesis_lengths = hypothesis_lengths.to(device)
             label = label.to(device)
 
             # Compute the logits
@@ -100,12 +98,16 @@ def batcher(params, batch) -> np.ndarray:
     # Tokenize and index the sentences
     for sent in batch:
         token_indices = vocab.tokenize_and_index(' '.join(sent))
-        sentence_indices.append(torch.tensor(token_indices, dtype=torch.long))
+        sentence_indices.append(token_indices)
         sentence_lengths.append(len(token_indices))
 
     # Pad sequences and compute lengths
     padded_sentences = pad_sequence(sentence_indices, batch_first=True, padding_value=1)
     lengths = torch.tensor(sentence_lengths, dtype=torch.long)
+
+    # Move the batch to the device
+    padded_sentences = padded_sentences.to(params.device)
+    lengths = lengths.to(params.device)
 
     # Compute the sentence embeddings
     sentence_embeddings = sentence_encoder(padded_sentences, lengths)
@@ -155,7 +157,7 @@ def main(args):
         # Load the validation data
         valid_data = SNLIDataset(
             args.data,
-            split="valid",
+            split="dev",
             vocab=vocab,
             subset=args.subset)
         valid_loader = DataLoader(
@@ -186,20 +188,24 @@ def main(args):
             "task_path": args.senteval_data_path,
             "usepytorch": args.use_pytorch,
             "kfold": args.kfold,
+            "device": args.device,
             "vocab": vocab,
             "model": model,
         }
+        params['classifier'] = {'nhid': 0, 'optim': 'rmsprop', 'batch_size': 128, 'tenacity': 3, 'epoch_size': 2}
         se = senteval.engine.SE(params, batcher, None)
-        transfer_tasks = ['MR', 'CR', 'MPQA', 'SUBJ']
+        transfer_tasks = ['MR', 'CR', 'MPQA', 'SUBJ', 'SST2', 'TREC', 'MRPC', 'SICKEntailment', 'STS14']
         results = se.eval(transfer_tasks)
 
         logging.info(f"Results: {results}")
 
         # Compute the macro and micro scores
-        macro_score = np.mean([results[task]['devacc'] for task in transfer_tasks])
+        tasks_with_devacc = [task for task in transfer_tasks if 'devacc' in results[task]]
+        macro_score = np.mean([results[task]['devacc'] for task in tasks_with_devacc])
         micro_score = np.sum(
-            [results[task]['ndev'] * results[task]['devacc'] for task in transfer_tasks]) / \
-                np.sum([results[task]['ndev'] for task in transfer_tasks])
+            [results[task]['ndev'] * results[task]['devacc'] for task in tasks_with_devacc]) / \
+                np.sum([results[task]['ndev'] for task in tasks_with_devacc])
+
 
         logging.info(f"Macro score: {macro_score:.3f}")
         logging.info(f"Micro score: {micro_score:.3f}")
