@@ -5,3 +5,4 @@ ruff
 spacy
 tqdm
 tensorboard
+scikit-learn

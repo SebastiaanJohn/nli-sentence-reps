@@ -8,29 +8,26 @@ class Classifier(torch.nn.Module):
 
     def __init__(
         self,
-        embedding_dim: int = 300,
+        sentence_rep_dim: int,
         hidden_dim: int = 512,
         num_classes: int = 3
         ):
         """Initialize the model.
 
         Args:
-            encoder (torch.nn.Module): Encoder model for the premise and
-                hypothesis sentence embeddings.
-            embedding_dim (int, optional): Dimension of the word embeddings.
-                Defaults to 300.
+            sentence_rep_dim (int): Dimension of the sentence embeddings.
             hidden_dim (int, optional): Dimension of the hidden layer in the
                 classifier. Defaults to 512.
             num_classes (int, optional): Number of classes in the dataset.
                 Defaults to 3.
         """
         super().__init__()
-        self.embedding_dim = embedding_dim
+        self.sentence_rep_dim = sentence_rep_dim
         self.hidden_dim = hidden_dim
         self.num_classes = num_classes
 
         self.mlp = torch.nn.Sequential(
-            torch.nn.Linear(4 * self.embedding_dim, self.hidden_dim),
+            torch.nn.Linear(4 * self.sentence_rep_dim, self.hidden_dim),
             torch.nn.Tanh(),
             torch.nn.Linear(self.hidden_dim, self.num_classes)
         )

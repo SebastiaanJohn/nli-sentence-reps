@@ -17,7 +17,7 @@ from src.data.utils import snli_collate_fn
 from src.eval import evaluate
 from src.models import NLIModel
 from src.models.classifiers import Classifier
-from src.models.encoders import BaselineEncoder, BiLSTMEncoder, LSTMEncoder
+from src.models.utils import get_encoder
 
 
 def train_step(
@@ -40,7 +40,7 @@ def train_step(
         The loss value for the batch.
     """
     # Unpack the batch
-    premise, hypothesis, label = batch
+    premise, hypothesis, premise_lengths, hypothesis_lengths, label = batch
 
     # Move the batch to the device
     premise = premise.to(device)
@@ -51,7 +51,7 @@ def train_step(
     optimizer.zero_grad()
 
     # Compute the logits
-    logits = model(premise, hypothesis)
+    logits = model(premise, premise_lengths, hypothesis, hypothesis_lengths)
 
     # Compute the loss
     loss = criterion(logits, label)
@@ -88,8 +88,6 @@ def train(
         device (torch.device): The device to use.
         args (argparse.Namespace): The command line arguments.
     """
-    model.to(device)
-
     best_valid_loss = float("inf")
     best_valid_accuracy = 0.0
     writer = SummaryWriter()
@@ -136,10 +134,8 @@ def train(
             # Save the model
             model_path = Path("models")
             model_path.mkdir(exist_ok=True)
-
             encoder_path = model_path / args.encoder
             encoder_path.mkdir(exist_ok=True)
-
             torch.save(model.state_dict(), encoder_path / "best_model.pt")
 
     logging.info(f"Best valid loss: {best_valid_loss:.3f}")
@@ -147,27 +143,10 @@ def train(
 
     writer.close()
 
-def get_encoder(args) -> nn.Module:
-    """Get the sentence encoder."""
-    if args.encoder == "baseline":
-        encoder = BaselineEncoder()
-    elif args.encoder == "lstm":
-        encoder = LSTMEncoder(args.embeddings_dim, args.hidden_size)
-    elif args.encoder == "bilstm":
-        encoder = BiLSTMEncoder(args.embeddings_dim, args.hidden_size)
-    elif args.encoder == "bilstm-max":
-        encoder = BiLSTMEncoder(args.embeddings_dim, args.hidden_size, max_pooling=True)
-    else:
-        error = f"Unknown encoder: {args.encoder}"
-        raise ValueError(error)
-
-    return encoder
-
 def main(args):
     """Main function for training and evaluating the model."""
     logging.info(f"Args: {args}")
-
-    logging.info("Loading the data...")
+    logging.info("Starting training...")
 
     # Set the random seed
     torch.manual_seed(args.seed)
@@ -175,21 +154,25 @@ def main(args):
     # Set the device
     device = torch.device(args.device)
 
+    logging.info("Loading the data...")
+
     # Load the training data
     train_data = SNLIDataset(
-        args.data,
+        args.data_path,
         split="train",
-        glove_embedding_size=args.glove_embedding_size,
+        glove_version=args.glove_version,
         subset=args.subset)
     train_dataloader = DataLoader(
         train_data, batch_size=args.batch_size, shuffle=True, collate_fn=snli_collate_fn)
 
+    # Get the vocabulary
+    vocab = train_data.vocab
+
     # Load the validation data
     valid_data = SNLIDataset(
-        args.data,
-        split="valid",
-        vocab=train_data.vocab,
-        glove_embedding_size=args.glove_embedding_size,
+        args.data_path,
+        split="dev",
+        vocab=vocab,
         subset=args.subset)
     valid_dataloader = DataLoader(
         valid_data, batch_size=args.batch_size, shuffle=False, collate_fn=snli_collate_fn)
@@ -197,11 +180,13 @@ def main(args):
     logging.info("Building the model...")
 
     # Load the sentence encoder and the classifier
-    encoder = get_encoder(args)
+    encoder = get_encoder(vocab.word_embedding, args)
+    if args.encoder == "bilstm" or args.encoder == "bilstm-max":
+        args.hidden_size = 2 * args.hidden_size
     classifier = Classifier(args.hidden_size)
 
     # Define the model
-    model = NLIModel(encoder, classifier)
+    model = NLIModel(encoder, classifier).to(device)
 
     # Load the model from a checkpoint if one is provided
     if args.checkpoint:
@@ -224,15 +209,16 @@ def main(args):
     # Load the best model
     model.load_state_dict(torch.load(f"models/{args.encoder}/best_model.pt"))
 
-    # Evaluate the model on the test data
+    # Load the test data
     test_data = SNLIDataset(
-        args.data,
+        args.data_path,
         split="test",
-        vocab=train_data.vocab,
-        glove_embedding_size=args.glove_embedding_size,
+        vocab=vocab,
         subset=args.subset)
     test_dataloader = DataLoader(
         test_data, batch_size=args.batch_size, shuffle=False, collate_fn=snli_collate_fn)
+
+    # Evaluate the model on the test data
     test_loss, test_accuracy = evaluate(model, criterion, test_dataloader, device)
 
     logging.info(f"Test loss: {test_loss:.3f}")
@@ -240,15 +226,15 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, default="data", help="Path to the data directory")
+    parser.add_argument("--data_path", type=str, default="data", help="Path to the data directory")
     parser.add_argument("--embeddings_dim", type=int, default=300, help="Embeddings dimension")
-    parser.add_argument("--glove_embedding_size", type=str, default="840B", choices=["6B", "42B", "840B"], help="GloVe embedding size")
+    parser.add_argument("--glove_version", type=str, default="840B", choices=["6B", "42B", "840B"], help="GloVe version")
     parser.add_argument("--subset", type=int, default=None, help="Subset of the data to use for training")
     parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "lstm", "bilstm", "bilstm-max"], help="Sentence encoder")
     parser.add_argument("--hidden_size", type=int, default=300, help="Hidden size of the LSTM")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=0.1, help="Learning rate")
-    parser.add_argument("--epochs", type=int, default=30, help="Number of epochs")
+    parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to a checkpoint to load the model from")
@@ -258,7 +244,7 @@ if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        datefmt="%d %H:%M:%S",
     )
 
     main(args)

@@ -3,11 +3,22 @@
 import argparse
 import logging
 
+import numpy as np
 import torch
+from spacy.lang.en import English
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+import senteval
+from src.data import SNLIDataset
+from src.data.utils import snli_collate_fn
+from src.models import NLIModel
+from src.models.classifiers import Classifier
+from src.models.utils import get_encoder
+
+
+nlp = English()
 
 def evaluate(
     model: nn.Module,
@@ -37,7 +48,7 @@ def evaluate(
     with torch.no_grad():
         for batch in tqdm(eval_data, desc="Evaluating"):
             # Unpack the batch
-            premise, hypothesis, label = batch
+            premise, hypothesis, premise_lengths, hypothesis_lengths, label = batch
 
             # Move the batch to the device
             premise = premise.to(device)
@@ -45,7 +56,7 @@ def evaluate(
             label = label.to(device)
 
             # Compute the logits
-            logits = model(premise, hypothesis)
+            logits = model(premise, premise_lengths, hypothesis, hypothesis_lengths)
 
             # Compute the loss
             loss = criterion(logits, label)
@@ -67,99 +78,144 @@ def evaluate(
     return eval_loss, accuracy
 
 
-def predict(
-    model: nn.Module,
-    premise: str,
-    hypothesis: str,
-    tokenizer,
-    token_to_idx: dict,
-    device: torch.device,
-) -> tuple[float, torch.Tensor]:
-    """Predict the relationship between the premise and hypothesis using the model.
+def batcher(params, batch) -> np.ndarray:
+    """Evaluate the model on the given batch of sentences.
 
     Args:
-        model: The trained model (encoder + classifier).
-        premise (str): The premise text.
-        hypothesis (str): The hypothesis text.
-        tokenizer: The tokenizer function.
-        token_to_idx (dict): Dictionary mapping tokens to their indices in the embedding matrix.
-        device: The device to use.
+        params (dict): SentEval parameters.
+        batch (list): Numpy array of text sentences (of size params.batch_size)
 
     Returns:
-        int: The predicted relationship.
-        torch.Tensor: The probabilities of the predicted relationship.
+        Numpy array of sentence embeddings (of size params.batch_size)
     """
-    # Set the model to evaluation mode
-    model.eval()
+    # if a sentence is empty dot is set to be the only token
+    batch = [sent if sent != [] else ['.'] for sent in batch]
+    sentence_encoder = params.model.encoder
+    vocab = params.model.vocab
 
-    # Tokenize and convert tokens to indices
-    premise_indices = tokenizer(premise)
-    hypothesis_indices = tokenizer(hypothesis)
+    sentence_embeddings = []
+    for sent in batch:
+        # Tokenize and index the sentence
+        token_indices = vocab.tokenize_and_index(sent)
 
-    # Convert indices to tensors and add a batch dimension
-    premise_tensor = torch.tensor(premise_indices).unsqueeze(0).to(device)
-    hypothesis_tensor = torch.tensor(hypothesis_indices).unsqueeze(0).to(device)
+        # Compute the sentence embedding
+        sent_embedding = sentence_encoder(token_indices)
 
-    # Disable gradient computation
-    with torch.no_grad():
-        # Compute the logits
-        logits = model(premise_tensor, hypothesis_tensor)
+        # Convert the sentence embedding to a numpy array
+        sent_embedding = sent_embedding.detach().cpu().numpy()
+        sentence_embeddings.append(sent_embedding)
 
-        # Apply softmax to get probabilities
-        probabilities = torch.softmax(logits, dim=-1)
+    return np.vstack(sentence_embeddings)
 
-        # Get the predicted relationship
-        prediction = torch.argmax(logits, dim=-1).item()
-
-    return prediction, probabilities.squeeze()
 
 def main(args):
+    """Evaluate the model."""
+    logging.info(f"Args: {args}")
+    logging.info("Starting evaluation...")
+
+    # Set the random seed
+    torch.manual_seed(args.seed)
+
+    logging.info("Building the vocabulary...")
+
+    # Create the vocabulary
+    vocab = SNLIDataset(
+        args.data,
+        split="train",
+        glove_version=args.glove_version,
+        subset=args.subset).vocab
+
+    logging.info("Building the model...")
+
     # Load the model
-    model = torch.load(args.model_path)
+    encoder = get_encoder(vocab.word_embedding, args)
+    classifier = Classifier(args.hidden_size)
+    model = NLIModel(encoder, classifier)
 
-    # Load the tokenizer
-    tokenizer = torch.load(args.tokenizer_path)
+    # Load the checkpoint
+    model.load_state_dict(torch.load(args.checkpoint, map_location=args.device))
+    model = model.to(args.device)
 
-    # Load the token_to_idx dictionary
-    token_to_idx = torch.load(args.token_to_idx_path)
+    # Define the loss function
+    criterion = nn.CrossEntropyLoss()
 
-    # Move the model to the device
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = model.to(device)
+    logging.info("Evaluating the model...")
 
-    # Predict the relationship between the premise and hypothesis
-    prediction, probabilities = predict(
-        model,
-        args.premise,
-        args.hypothesis,
-        tokenizer,
-        token_to_idx,
-        device,
-    )
+    # Evaluate the model
+    if args.eval:
+        logging.info("Evaluating on the validation and test sets...")
+        # Load the validation data
+        valid_data = SNLIDataset(
+            args.data,
+            split="valid",
+            vocab=vocab,
+            subset=args.subset)
+        valid_loader = DataLoader(
+            valid_data, batch_size=args.batch_size, shuffle=False, collate_fn=snli_collate_fn)
 
-    # Print the prediction and probabilities
-    print(f"Predicted relationship: {prediction}")
-    print(f"Probabilities: {probabilities}")
+        # Load the test data
+        test_data = SNLIDataset(
+            args.data,
+            split="test",
+            vocab=vocab,
+            subset=args.subset)
+        test_loader = DataLoader(
+            test_data, batch_size=args.batch_size, shuffle=False, collate_fn=snli_collate_fn)
+
+        valid_loss, valid_accuracy = evaluate(model, criterion, valid_loader, args.device)
+        test_loss, test_accuracy = evaluate(model, criterion, test_loader, args.device)
+
+        logging.info(f"Valid loss: {valid_loss:.3f}")
+        logging.info(f"Valid accuracy: {valid_accuracy:.3f}")
+        logging.info(f"Test loss: {test_loss:.3f}")
+        logging.info(f"Test accuracy: {test_accuracy:.3f}")
+
+    # Evaluate the model using SentEval
+    if args.senteval:
+        logging.info("Evaluating on SentEval...")
+        params = {
+            "args": args,
+            "usepytorch": True,
+            "kfold": 5,
+            "vocab": vocab,
+            "model": model,
+        }
+        se = senteval.engine.SE(params, batcher)
+        transfer_tasks = ['MR', 'CR', 'MPQA', 'SUBJ', 'SST2', 'TREC',
+                      'MRPC', 'SICKEntailment', 'STS14']
+        results = se.eval(transfer_tasks)
+        print(results)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, default="data")
-    parser.add_argument("--embeddings_dim", type=int, default=300)
-    parser.add_argument("--glove_embedding_size", type=str, default="840B")
-    parser.add_argument("--subset", type=int, default=None)
-    parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "uni_lstm"])
-    parser.add_argument("--hidden_size", type=int, default=300)
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--learning_rate", type=float, default=0.001)
-    parser.add_argument("--epochs", type=int, default=10)
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
-    parser.add_argument("--seed", type=int, default=42)
+
+    # Required parameters
+    parser.add_argument("checkpoint", type=str, help="Path to the checkpoint to evaluate")
+
+    # Other parameters
+    parser.add_argument("--eval", action="store_true", help="Evaluate the model on the validation and test sets")
+    parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "lstm", "bilstm", "bilstm-max"], help="Sentence encoder")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use")
+    parser.add_argument("--embeddings_dim", type=int, default=300, help="Embeddings dimension")
+    parser.add_argument("--glove_version", type=str, default="840B", choices=["6B", "42B", "840B"], help="GloVe version to use")
+    parser.add_argument("--subset", type=int, default=None, help="Subset of the data to use for training")
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--data", type=str, default="data", help="Path to the data directory")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+    parser.add_argument("--hidden_size", type=int, default=300, help="Hidden size of the LSTM")
+
+    # SentEval parameters
+    parser.add_argument("--senteval", action="store_true", help="Use the SentEval evaluation metric")
+    parser.add_argument("--senteval_data_path", type=str, default="SentEval/data/", help="Path to the SentEval data directory")
+    parser.add_argument("--kfold", type=int, default=5, help="Number of folds for cross-validation")
+    parser.add_argument("--usepytorch", action="store_true", help="Use PyTorch")
+
     args = parser.parse_args()
 
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        datefmt="%d %H:%M:%S",
     )
 
     main(args)

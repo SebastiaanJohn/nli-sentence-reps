@@ -2,6 +2,7 @@ data/snli_1.0
 .vector_cache
 runs/*
 models/*
+SentEval/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

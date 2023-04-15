@@ -17,18 +17,26 @@ class NLIModel(nn.Module):
         self.encoder = encoder
         self.classifier = classifier
 
-    def forward(self, premise: torch.Tensor, hypothesis: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        premise: torch.Tensor,
+        premise_lengths: torch.Tensor,
+        hypothesis: torch.Tensor,
+        hypothesis_lengths: torch.Tensor
+        ) -> torch.Tensor:
         """Perform a forward pass through the model.
 
         Args:
             premise (torch.Tensor): The premise sentences.
+            premise_lengths (torch.Tensor): The lengths of the premise sentences.
             hypothesis (torch.Tensor): The hypothesis sentences.
+            hypothesis_lengths (torch.Tensor): The lengths of the hypothesis sentences.
 
         Returns:
             torch.Tensor: The logits.
         """
-        premise_rep = self.encoder(premise)
-        hypothesis_rep = self.encoder(hypothesis)
+        premise_rep = self.encoder(premise, premise_lengths)
+        hypothesis_rep = self.encoder(hypothesis, hypothesis_lengths)
         logits = self.classifier(premise_rep, hypothesis_rep)
 
         return logits
