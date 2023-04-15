@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from spacy.lang.en import English
 from torch import nn
+from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -91,21 +92,28 @@ def batcher(params, batch) -> np.ndarray:
     # if a sentence is empty dot is set to be the only token
     batch = [sent if sent != [] else ['.'] for sent in batch]
     sentence_encoder = params.model.encoder
-    vocab = params.model.vocab
+    vocab = params.vocab
 
-    sentence_embeddings = []
+    sentence_indices = []
+    sentence_lengths = []
+
+    # Tokenize and index the sentences
     for sent in batch:
-        # Tokenize and index the sentence
-        token_indices = vocab.tokenize_and_index(sent)
+        token_indices = vocab.tokenize_and_index(' '.join(sent))
+        sentence_indices.append(torch.tensor(token_indices, dtype=torch.long))
+        sentence_lengths.append(len(token_indices))
 
-        # Compute the sentence embedding
-        sent_embedding = sentence_encoder(token_indices)
+    # Pad sequences and compute lengths
+    padded_sentences = pad_sequence(sentence_indices, batch_first=True, padding_value=1)
+    lengths = torch.tensor(sentence_lengths, dtype=torch.long)
 
-        # Convert the sentence embedding to a numpy array
-        sent_embedding = sent_embedding.detach().cpu().numpy()
-        sentence_embeddings.append(sent_embedding)
+    # Compute the sentence embeddings
+    sentence_embeddings = sentence_encoder(padded_sentences, lengths)
 
-    return np.vstack(sentence_embeddings)
+    # Convert the sentence embeddings to a numpy array
+    sentence_embeddings = sentence_embeddings.detach().cpu().numpy()
+
+    return sentence_embeddings
 
 
 def main(args):
@@ -175,16 +183,26 @@ def main(args):
         logging.info("Evaluating on SentEval...")
         params = {
             "args": args,
-            "usepytorch": True,
-            "kfold": 5,
+            "task_path": args.senteval_data_path,
+            "usepytorch": args.use_pytorch,
+            "kfold": args.kfold,
             "vocab": vocab,
             "model": model,
         }
-        se = senteval.engine.SE(params, batcher)
-        transfer_tasks = ['MR', 'CR', 'MPQA', 'SUBJ', 'SST2', 'TREC',
-                      'MRPC', 'SICKEntailment', 'STS14']
+        se = senteval.engine.SE(params, batcher, None)
+        transfer_tasks = ['MR', 'CR', 'MPQA', 'SUBJ']
         results = se.eval(transfer_tasks)
-        print(results)
+
+        logging.info(f"Results: {results}")
+
+        # Compute the macro and micro scores
+        macro_score = np.mean([results[task]['devacc'] for task in transfer_tasks])
+        micro_score = np.sum(
+            [results[task]['ndev'] * results[task]['devacc'] for task in transfer_tasks]) / \
+                np.sum([results[task]['ndev'] for task in transfer_tasks])
+
+        logging.info(f"Macro score: {macro_score:.3f}")
+        logging.info(f"Micro score: {micro_score:.3f}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -208,7 +226,7 @@ if __name__ == "__main__":
     parser.add_argument("--senteval", action="store_true", help="Use the SentEval evaluation metric")
     parser.add_argument("--senteval_data_path", type=str, default="SentEval/data/", help="Path to the SentEval data directory")
     parser.add_argument("--kfold", type=int, default=5, help="Number of folds for cross-validation")
-    parser.add_argument("--usepytorch", action="store_true", help="Use PyTorch")
+    parser.add_argument("--no_pytorch", action="store_false", dest="use_pytorch", help="Use PyTorch for SentEval")
 
     args = parser.parse_args()
 
