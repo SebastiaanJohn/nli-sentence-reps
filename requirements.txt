@@ -6,4 +6,3 @@ spacy
 tqdm
 tensorboard
 scikit-learn
-git+https://github.com/facebookresearch/SentEval.git
