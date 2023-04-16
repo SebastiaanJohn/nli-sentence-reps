@@ -1,7 +1,7 @@
 data/snli_1.0
 .vector_cache
-models/*
-SentEval/
+models/*/*.pt
+/SentEval/
 data/downstream/*/
 
 # Byte-compiled / optimized / DLL files
