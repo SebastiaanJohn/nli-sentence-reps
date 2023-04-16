@@ -143,6 +143,7 @@ def train(
     logging.info(f"Best valid loss: {best_valid_loss:.3f}")
     logging.info(f"Best valid accuracy: {best_valid_accuracy:.3f}")
 
+    writer.flush()
     writer.close()
 
 def main(args):

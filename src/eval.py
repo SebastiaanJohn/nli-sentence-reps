@@ -10,7 +10,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from data.dataset import SNLIDataset
+from data.dataset import SNLIDataset, SNLIVocabulary
 from data.utils import snli_collate_fn
 from models.classifiers import Classifier
 from models.net import NLIModel
@@ -117,6 +117,59 @@ def batcher(params, batch) -> np.ndarray:
 
     return sentence_embeddings
 
+def predict(
+    model: nn.Module,
+    sentence_encoder: nn.Module,
+    vocab: SNLIVocabulary,
+    device: torch.device,
+    premise: str,
+    hypothesis: str,
+) -> torch.Tensor:
+    """Predict the entailment label of the given premise and hypothesis.
+
+    Args:
+        model (nn.Module): The model (encoder + classifier).
+        sentence_encoder (nn.Module): The sentence encoder.
+        vocab (SNLIVocabulary): The vocabulary.
+        device (torch.device): The device to use.
+        premise (str): The premise.
+        hypothesis (str): The hypothesis.
+
+    Returns:
+        torch.Tensor: The predicted entailment label.
+    """
+    # Set the model to evaluation mode
+    model.eval()
+
+    # Disable gradient computation
+    with torch.no_grad():
+        # Tokenize and index the premise and hypothesis
+        premise_indices = vocab.tokenize_and_index(premise)
+        hypothesis_indices = vocab.tokenize_and_index(hypothesis)
+
+        # Pad sequences and compute lengths
+        padded_premises = pad_sequence(premise_indices, batch_first=True, padding_value=1)
+        premise_lengths = torch.tensor([len(premise_indices)], dtype=torch.long)
+        padded_hypotheses = pad_sequence(hypothesis_indices, batch_first=True, padding_value=1)
+        hypothesis_lengths = torch.tensor([len(hypothesis_indices)], dtype=torch.long)
+
+        # Move the batch to the device
+        padded_premises = padded_premises.to(device)
+        premise_lengths = premise_lengths.to(device)
+        padded_hypotheses = padded_hypotheses.to(device)
+        hypothesis_lengths = hypothesis_lengths.to(device)
+
+        # Compute the sentence embeddings
+        premise_embeddings = sentence_encoder(premise, premise_lengths)
+        hypothesis_embeddings = sentence_encoder(hypothesis, hypothesis_lengths)
+
+        # Compute the logits
+        logits = model(premise_embeddings, hypothesis_embeddings)
+
+        # Get the predictions
+        predictions = torch.argmax(logits, dim=-1)
+
+    return predictions
 
 def main(args):
     """Evaluate the model."""
