@@ -1,4 +1,5 @@
 """Evaluation and prediction functions."""
+
 import argparse
 import logging
 
@@ -10,7 +11,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from data.dataset import SNLIDataset, SNLIVocabulary
+from data.dataset import SNLIDataset
 from data.utils import snli_collate_fn
 from models.classifiers import Classifier
 from models.net import NLIModel
@@ -45,7 +46,9 @@ def evaluate(
     with torch.no_grad():
         for batch in tqdm(eval_data, desc="Evaluating"):
             # Unpack the batch
-            premise, hypothesis, premise_lengths, hypothesis_lengths, label = batch
+            (premise, hypothesis,
+             premise_lengths, hypothesis_lengths,
+             label) = batch
 
             # Move the batch to the device
             premise = premise.to(device)
@@ -77,8 +80,9 @@ def evaluate(
     return eval_loss, accuracy
 
 
+
 def batcher(params, batch) -> np.ndarray:
-    """Evaluate the model on the given batch of sentences.
+    """Evaluate the model on the given batch of sentences (SentEval).
 
     Args:
         params (dict): SentEval parameters.
@@ -87,22 +91,18 @@ def batcher(params, batch) -> np.ndarray:
     Returns:
         Numpy array of sentence embeddings (of size params.batch_size)
     """
-    # if a sentence is empty dot is set to be the only token
+    # Ensure non-empty sentences by replacing empty ones with a dot
     batch = [sent if sent != [] else ['.'] for sent in batch]
+
     sentence_encoder = params.model.encoder
     vocab = params.vocab
 
-    sentence_indices = []
-    sentence_lengths = []
-
-    # Tokenize and index the sentences
-    for sent in batch:
-        token_indices = vocab.tokenize_and_index(' '.join(sent))
-        sentence_indices.append(token_indices)
-        sentence_lengths.append(len(token_indices))
+    # Tokenize and index the sentences, and compute their lengths
+    tokenized_sentences = [vocab.tokenize_and_index(' '.join(sent)) for sent in batch]
+    sentence_lengths = [len(tokenized_sent) for tokenized_sent in tokenized_sentences]
 
     # Pad sequences and compute lengths
-    padded_sentences = pad_sequence(sentence_indices, batch_first=True, padding_value=1)
+    padded_sentences = pad_sequence(tokenized_sentences, batch_first=True, padding_value=1)
     lengths = torch.tensor(sentence_lengths, dtype=torch.long)
 
     # Move the batch to the device
@@ -113,63 +113,7 @@ def batcher(params, batch) -> np.ndarray:
     sentence_embeddings = sentence_encoder(padded_sentences, lengths)
 
     # Convert the sentence embeddings to a numpy array
-    sentence_embeddings = sentence_embeddings.detach().cpu().numpy()
-
-    return sentence_embeddings
-
-def predict(
-    model: nn.Module,
-    sentence_encoder: nn.Module,
-    vocab: SNLIVocabulary,
-    device: torch.device,
-    premise: str,
-    hypothesis: str,
-) -> torch.Tensor:
-    """Predict the entailment label of the given premise and hypothesis.
-
-    Args:
-        model (nn.Module): The model (encoder + classifier).
-        sentence_encoder (nn.Module): The sentence encoder.
-        vocab (SNLIVocabulary): The vocabulary.
-        device (torch.device): The device to use.
-        premise (str): The premise.
-        hypothesis (str): The hypothesis.
-
-    Returns:
-        torch.Tensor: The predicted entailment label.
-    """
-    # Set the model to evaluation mode
-    model.eval()
-
-    # Disable gradient computation
-    with torch.no_grad():
-        # Tokenize and index the premise and hypothesis
-        premise_indices = vocab.tokenize_and_index(premise)
-        hypothesis_indices = vocab.tokenize_and_index(hypothesis)
-
-        # Pad sequences and compute lengths
-        padded_premises = pad_sequence(premise_indices, batch_first=True, padding_value=1)
-        premise_lengths = torch.tensor([len(premise_indices)], dtype=torch.long)
-        padded_hypotheses = pad_sequence(hypothesis_indices, batch_first=True, padding_value=1)
-        hypothesis_lengths = torch.tensor([len(hypothesis_indices)], dtype=torch.long)
-
-        # Move the batch to the device
-        padded_premises = padded_premises.to(device)
-        premise_lengths = premise_lengths.to(device)
-        padded_hypotheses = padded_hypotheses.to(device)
-        hypothesis_lengths = hypothesis_lengths.to(device)
-
-        # Compute the sentence embeddings
-        premise_embeddings = sentence_encoder(premise, premise_lengths)
-        hypothesis_embeddings = sentence_encoder(hypothesis, hypothesis_lengths)
-
-        # Compute the logits
-        logits = model(premise_embeddings, hypothesis_embeddings)
-
-        # Get the predictions
-        predictions = torch.argmax(logits, dim=-1)
-
-    return predictions
+    return sentence_embeddings.detach().cpu().numpy()
 
 def main(args):
     """Evaluate the model."""
@@ -192,6 +136,8 @@ def main(args):
 
     # Load the model
     encoder = get_encoder(vocab.word_embedding, args)
+    if args.encoder in {"bilstm", "bilstm-max"}:
+        args.hidden_size *= 2
     classifier = Classifier(args.hidden_size)
     model = NLIModel(encoder, classifier)
 
@@ -245,9 +191,11 @@ def main(args):
             "vocab": vocab,
             "model": model,
         }
-        # params['classifier'] = {'nhid': 0, 'optim': 'rmsprop', 'batch_size': 128, 'tenacity': 3, 'epoch_size': 2}
+        if args.senteval_fast:
+            params['classifier'] = {'nhid': 0, 'optim': 'rmsprop', 'batch_size': 128, 'tenacity': 3, 'epoch_size': 2}
+
         se = senteval.engine.SE(params, batcher, None)
-        transfer_tasks = ['MR', 'CR', 'SUBJ', 'MPQA', 'SST', 'TREC', 'SICKRelatedness', 'SICKEntailment', 'MRPC', 'STS14']
+        transfer_tasks = ['MR', 'CR', 'MPQA', 'SUBJ', 'SST2', 'TREC', 'MRPC', 'SICKEntailment', 'SICKRelatedness', 'STS14']
         results = se.eval(transfer_tasks)
 
         logging.info(f"Results: {results}")
@@ -258,7 +206,6 @@ def main(args):
         micro_score = np.sum(
             [results[task]['ndev'] * results[task]['devacc'] for task in tasks_with_devacc]) / \
                 np.sum([results[task]['ndev'] for task in tasks_with_devacc])
-
 
         logging.info(f"Macro score: {macro_score:.3f}")
         logging.info(f"Micro score: {micro_score:.3f}")
@@ -271,21 +218,32 @@ if __name__ == "__main__":
 
     # Other parameters
     parser.add_argument("--eval", action="store_true", help="Evaluate the model on the validation and test sets")
-    parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "lstm", "bilstm", "bilstm-max"], help="Sentence encoder")
-    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use")
+    parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "lstm", "bilstm", "bilstm-max"],
+                        help="Sentence encoder")
+    parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
+                        help="Device to use")
+
+    # Model parameters
     parser.add_argument("--embeddings_dim", type=int, default=300, help="Embeddings dimension")
-    parser.add_argument("--glove_version", type=str, default="840B", choices=["6B", "42B", "840B"], help="GloVe version to use")
-    parser.add_argument("--subset", type=int, default=None, help="Subset of the data to use for training")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--data", type=str, default="data", help="Path to the data directory")
-    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
     parser.add_argument("--hidden_size", type=int, default=300, help="Hidden size of the LSTM")
 
+    # Data parameters
+    parser.add_argument("--data", type=str, default="data", help="Path to the data directory")
+    parser.add_argument("--glove_version", type=str, default="840B", choices=["6B", "42B", "840B"],
+                        help="GloVe version to use")
+    parser.add_argument("--subset", type=int, default=None,  help="Subset of the data to use for training")
+
+    # Training parameters
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+
     # SentEval parameters
-    parser.add_argument("--senteval", action="store_true", help="Use the SentEval evaluation metric")
+    parser.add_argument("--senteval", action="store_true",  help="Use the SentEval evaluation metric")
+    parser.add_argument("--senteval_fast", action="store_true",  help="Use the fast version of SentEval")
     parser.add_argument("--senteval_data_path", type=str, default="data", help="Path to the SentEval data directory")
-    parser.add_argument("--kfold", type=int, default=5, help="Number of folds for cross-validation")
-    parser.add_argument("--no_pytorch", action="store_false", dest="use_pytorch", help="Use PyTorch for SentEval")
+    parser.add_argument("--kfold", type=int, default=5,  help="Number of folds for cross-validation")
+    parser.add_argument("--no_pytorch", action="store_false", dest="use_pytorch",
+                        help="Use PyTorch for SentEval")
 
     args = parser.parse_args()
 
@@ -296,3 +254,4 @@ if __name__ == "__main__":
     )
 
     main(args)
+

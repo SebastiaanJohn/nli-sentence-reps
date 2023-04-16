@@ -97,34 +97,27 @@ def train(
     for epoch in range(epochs):
         logging.info(f"Epoch {epoch + 1} / {epochs}")
 
-        # Set the model to training mode
         model.train()
-
-        # Keep track of the training loss
         train_loss = 0.0
 
+        # Train the model
         for batch in tqdm(train_loader, desc=f"Epoch {epoch + 1}"):
             loss = train_step(model, optimizer, criterion, batch, device)
             train_loss += loss
 
         # Compute the average training loss
-        train_loss = train_loss / len(train_loader)
-
+        train_loss /= len(train_loader)
         logging.info(f"Train loss: {train_loss:.3f}")
-
-        # Write the train loss to TensorBoard
         writer.add_scalar("Loss/train", train_loss, epoch)
 
         # Evaluate the model on the development data
         valid_loss, valid_accuracy = evaluate(model, criterion, valid_loader, device)
-
         logging.info(f"Valid loss: {valid_loss:.3f}")
         logging.info(f"Accuracy: {valid_accuracy:.3f}")
 
         # Update the learning rate
         scheduler.step(valid_accuracy)
 
-        # Write the validation loss and accuracy to TensorBoard
         writer.add_scalar("Loss/valid", valid_loss, epoch)
         writer.add_scalar("Accuracy/valid", valid_accuracy, epoch)
 
@@ -149,7 +142,6 @@ def train(
 def main(args):
     """Main function for training and evaluating the model."""
     logging.info(f"Args: {args}")
-    logging.info("Starting training...")
 
     # Set the random seed
     torch.manual_seed(args.seed)
@@ -158,7 +150,6 @@ def main(args):
     device = torch.device(args.device)
 
     logging.info("Loading the data...")
-
     # Load the training data
     train_data = SNLIDataset(
         args.data_path,
@@ -181,7 +172,6 @@ def main(args):
         valid_data, batch_size=args.batch_size, shuffle=False, collate_fn=snli_collate_fn)
 
     logging.info("Building the model...")
-
     # Load the sentence encoder and the classifier
     encoder = get_encoder(vocab.word_embedding, args)
     if args.encoder == "bilstm" or args.encoder == "bilstm-max":
@@ -204,14 +194,14 @@ def main(args):
     # Define the loss function
     criterion = nn.CrossEntropyLoss()
 
-    logging.info("Training the model...")
-
+    logging.info("Starting training...")
     # Train the model
     train(model, optimizer, scheduler, criterion, train_dataloader, valid_dataloader, args.epochs, device, args)
 
     # Load the best model
     model.load_state_dict(torch.load(f"models/{args.encoder}/best_model.pt"))
 
+    logging.info("Evaluating the model on the test data...")
     # Load the test data
     test_data = SNLIDataset(
         args.data_path,
@@ -227,19 +217,30 @@ def main(args):
     logging.info(f"Test loss: {test_loss:.3f}")
     logging.info(f"Test accuracy: {test_accuracy:.3f}")
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+
+    # Data parameters
     parser.add_argument("--data_path", type=str, default="data", help="Path to the data directory")
-    parser.add_argument("--embeddings_dim", type=int, default=300, help="Embeddings dimension")
     parser.add_argument("--glove_version", type=str, default="840B", choices=["6B", "42B", "840B"], help="GloVe version")
     parser.add_argument("--subset", type=int, default=None, help="Subset of the data to use for training")
+
+    # Model parameters
+    parser.add_argument("--embeddings_dim", type=int, default=300, help="Embeddings dimension")
     parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "lstm", "bilstm", "bilstm-max"], help="Sentence encoder")
     parser.add_argument("--hidden_size", type=int, default=300, help="Hidden size of the LSTM")
+
+    # Training parameters
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=0.1, help="Learning rate")
     parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
+
+    # Environment parameters
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+
+    # Checkpoint parameters
     parser.add_argument("--checkpoint", type=str, default=None, help="Path to a checkpoint to load the model from")
 
     args = parser.parse_args()
@@ -251,3 +252,5 @@ if __name__ == "__main__":
     )
 
     main(args)
+
+
