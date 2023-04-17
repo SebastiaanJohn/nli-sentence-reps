@@ -173,10 +173,14 @@ def main(args):
 
     logging.info("Building the model...")
     # Load the sentence encoder and the classifier
-    encoder = get_encoder(vocab.word_embedding, args)
-    if args.encoder == "bilstm" or args.encoder == "bilstm-max":
-        args.hidden_size = 2 * args.hidden_size
-    classifier = Classifier(args.hidden_size)
+    encoder = get_encoder(vocab.word_embedding, args.encoder)
+    if args.encoder in {"bilstm", "bilstm-max"}:
+        classifier_input_dim = 4096
+    elif args.encoder == "lstm":
+        classifier_input_dim = 2048
+    else:
+        classifier_input_dim = 300
+    classifier = Classifier(classifier_input_dim)
 
     # Define the model
     model = NLIModel(encoder, classifier).to(device)
@@ -193,6 +197,10 @@ def main(args):
 
     # Define the loss function
     criterion = nn.CrossEntropyLoss()
+
+    # get total number of parameters
+    total_params = sum(p.numel() for p in model.parameters())
+    logging.info(f"Total number of parameters: {total_params}")
 
     logging.info("Starting training...")
     # Train the model
@@ -227,9 +235,8 @@ if __name__ == "__main__":
     parser.add_argument("--subset", type=int, default=None, help="Subset of the data to use for training")
 
     # Model parameters
-    parser.add_argument("--embeddings_dim", type=int, default=300, help="Embeddings dimension")
+    parser.add_argument("--input_dim", type=int, default=300, help="Input dimension of the word embeddings")
     parser.add_argument("--encoder", type=str, default="baseline", choices=["baseline", "lstm", "bilstm", "bilstm-max"], help="Sentence encoder")
-    parser.add_argument("--hidden_size", type=int, default=300, help="Hidden size of the LSTM")
 
     # Training parameters
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size")

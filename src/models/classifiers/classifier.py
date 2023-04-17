@@ -8,26 +8,26 @@ class Classifier(torch.nn.Module):
 
     def __init__(
         self,
-        sentence_rep_dim: int,
+        input_dim: int,
         hidden_dim: int = 512,
         num_classes: int = 3
         ):
         """Initialize the model.
 
         Args:
-            sentence_rep_dim (int): Dimension of the sentence embeddings.
+            input_dim (int): Dimension of the input sentence embeddings.
             hidden_dim (int, optional): Dimension of the hidden layer in the
                 classifier. Defaults to 512.
             num_classes (int, optional): Number of classes in the dataset.
                 Defaults to 3.
         """
         super().__init__()
-        self.sentence_rep_dim = sentence_rep_dim
+        self.input_dim = input_dim
         self.hidden_dim = hidden_dim
         self.num_classes = num_classes
 
         self.mlp = torch.nn.Sequential(
-            torch.nn.Linear(4 * self.sentence_rep_dim, self.hidden_dim),
+            torch.nn.Linear(4 * self.input_dim, self.hidden_dim),
             torch.nn.Tanh(),
             torch.nn.Linear(self.hidden_dim, self.num_classes)
         )
@@ -36,11 +36,11 @@ class Classifier(torch.nn.Module):
         """Forward pass of the model.
 
         3 matching methods are applied to extract relations between u and v:
-        (i) concatenation of the two representa- tions (u, v);
+        (i) concatenation of the two representations (u, v);
         (ii) element-wise product u * v; and
         (iii) absolute element-wise difference |u - v|.
-
-        The resulting 4 * d-dimensional vector is then passed through a two-layer MLP.
+        These 3 matching methods are then concatenated and passed through a
+        two-layer MLP.
 
         Args:
             encoded_premise (torch.Tensor): Tensor of premise embeddings.

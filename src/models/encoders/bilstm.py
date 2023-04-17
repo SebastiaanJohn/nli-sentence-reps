@@ -13,8 +13,8 @@ class BiLSTMEncoder(nn.Module):
     def __init__(
         self,
         word_embeddings: torch.Tensor,
-        input_size: int,
-        hidden_size: int,
+        input_dim: int = 300,
+        output_dim: int = 2048,
         num_layers: int = 1,
         max_pooling: bool = False
         ) -> None:
@@ -22,15 +22,15 @@ class BiLSTMEncoder(nn.Module):
 
         Args:
             word_embeddings (torch.Tensor): The word embeddings.
-            input_size (int): The size of the input embeddings.
-            hidden_size (int): The size of the hidden states.
+            input_dim (int): The dimension of the input word embeddings. Defaults to 300.
+            output_dim (int): The dimension of the output sentence representations. Defaults to 2048.
             num_layers (int): The number of layers in the LSTM. Defaults to 1.
             max_pooling (bool): Whether to use max-pooling to aggregate the word-level hidden states.
                 Defaults to False.
         """
         super(BiLSTMEncoder, self).__init__()
         self.word_embeddings = nn.Embedding.from_pretrained(word_embeddings)
-        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, bidirectional=True, batch_first=True)
+        self.lstm = nn.LSTM(input_dim, output_dim, num_layers, bidirectional=True, batch_first=True)
         self.max_pooling = max_pooling
 
     def forward(self, indices: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:

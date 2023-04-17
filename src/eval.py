@@ -135,10 +135,14 @@ def main(args):
     logging.info("Building the model...")
 
     # Load the model
-    encoder = get_encoder(vocab.word_embedding, args)
+    encoder = get_encoder(vocab.word_embedding, args.encoder)
     if args.encoder in {"bilstm", "bilstm-max"}:
-        args.hidden_size *= 2
-    classifier = Classifier(args.hidden_size)
+        classifier_input_dim = 4096
+    elif args.encoder == "lstm":
+        classifier_input_dim = 2048
+    else:
+        classifier_input_dim = 300
+    classifier = Classifier(classifier_input_dim)
     model = NLIModel(encoder, classifier)
 
     # Load the checkpoint
@@ -224,8 +228,7 @@ if __name__ == "__main__":
                         help="Device to use")
 
     # Model parameters
-    parser.add_argument("--embeddings_dim", type=int, default=300, help="Embeddings dimension")
-    parser.add_argument("--hidden_size", type=int, default=300, help="Hidden size of the LSTM")
+    parser.add_argument("--input_dim", type=int, default=300, help="Input dimension of the word embeddings")
 
     # Data parameters
     parser.add_argument("--data", type=str, default="data", help="Path to the data directory")

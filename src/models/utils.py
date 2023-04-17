@@ -7,18 +7,26 @@ from models.encoders.bilstm import BiLSTMEncoder
 from models.encoders.lstm import LSTMEncoder
 
 
-def get_encoder(embeddings, args) -> nn.Module:
-    """Get the sentence encoder."""
-    if args.encoder == "baseline":
+def get_encoder(embeddings, encoder_name: str) -> nn.Module:
+    """Get the sentence encoder.
+
+    Args:
+        embeddings (torch.Tensor): The word embeddings.
+        encoder_name (str): The name of the encoder.
+
+    Returns:
+        (nn.Module): The encoder.
+    """
+    if encoder_name == "baseline":
         encoder = BaselineEncoder(embeddings)
-    elif args.encoder == "lstm":
-        encoder = LSTMEncoder(embeddings, args.embeddings_dim, args.hidden_size)
-    elif args.encoder == "bilstm":
-        encoder = BiLSTMEncoder(embeddings, args.embeddings_dim, args.hidden_size)
-    elif args.encoder == "bilstm-max":
-        encoder = BiLSTMEncoder(embeddings, args.embeddings_dim, args.hidden_size, max_pooling=True)
+    elif encoder_name == "lstm":
+        encoder = LSTMEncoder(embeddings, 300, 2048)
+    elif encoder_name == "bilstm":
+        encoder = BiLSTMEncoder(embeddings, 300, 2048)
+    elif encoder_name == "bilstm-max":
+        encoder = BiLSTMEncoder(embeddings, 300, 2048, max_pooling=True)
     else:
-        error = f"Unknown encoder: {args.encoder}"
+        error = f"Unknown encoder: {encoder_name}"
         raise ValueError(error)
 
     return encoder
