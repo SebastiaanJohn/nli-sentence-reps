@@ -11,6 +11,7 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+from data.dataset import build_vocabulary, get_dataloader, tokenize, tokens_to_indices
 from models.classifiers import Classifier
 from models.net import NLIModel
 from models.utils import get_encoder
@@ -77,8 +78,6 @@ def evaluate(
 
     return eval_loss, accuracy
 
-
-
 def batcher(params, batch) -> np.ndarray:
     """Evaluate the model on the given batch of sentences (SentEval).
 
@@ -93,15 +92,17 @@ def batcher(params, batch) -> np.ndarray:
     batch = [sent if sent != [] else ['.'] for sent in batch]
 
     sentence_encoder = params.model.encoder
-    vocab = params.vocab
+    token_to_idx = params.token_to_idx
 
-    # Tokenize and index the sentences, and compute their lengths
-    tokenized_sentences = [vocab.tokenize_and_index(' '.join(sent)) for sent in batch]
-    sentence_lengths = [len(tokenized_sent) for tokenized_sent in tokenized_sentences]
+    # Tokenize the sentences
+    tokenized_sentences = [tokenize(' '.join(sent)) for sent in batch]
+
+    # Get the indices of the tokens
+    indices = [tokens_to_indices(tokens, token_to_idx) for tokens in tokenized_sentences]
 
     # Pad sequences and compute lengths
-    padded_sentences = pad_sequence(tokenized_sentences, batch_first=True, padding_value=1)
-    lengths = torch.tensor(sentence_lengths, dtype=torch.long)
+    padded_sentences = pad_sequence(indices, batch_first=True, padding_value=1)
+    lengths = torch.tensor([len(index) for index in indices])
 
     # Move the batch to the device
     padded_sentences = padded_sentences.to(params.device)
@@ -121,19 +122,13 @@ def main(args):
     # Set the random seed
     torch.manual_seed(args.seed)
 
-    logging.info("Building the vocabulary...")
-
     # Create the vocabulary
-    vocab = SNLIDataset(
-        args.data,
-        split="train",
-        glove_version=args.glove_version,
-        subset=args.subset).vocab
-
-    logging.info("Building the model...")
+    logging.info("Loading the vocabulary...")
+    token_to_idx, word_embeddings = build_vocabulary("train", args.glove_version, args.input_dim)
 
     # Load the model
-    encoder = get_encoder(vocab.word_embedding, args.encoder)
+    logging.info("Building the model...")
+    encoder = get_encoder(word_embeddings, args.encoder)
     if args.encoder in {"bilstm", "bilstm-max"}:
         classifier_input_dim = 4096
     elif args.encoder == "lstm":
@@ -155,23 +150,8 @@ def main(args):
     # Evaluate the model
     if args.eval:
         logging.info("Evaluating on the validation and test sets...")
-        # Load the validation data
-        valid_data = SNLIDataset(
-            args.data,
-            split="dev",
-            vocab=vocab,
-            subset=args.subset)
-        valid_loader = DataLoader(
-            valid_data, batch_size=args.batch_size, shuffle=False, collate_fn=snli_collate_fn)
-
-        # Load the test data
-        test_data = SNLIDataset(
-            args.data,
-            split="test",
-            vocab=vocab,
-            subset=args.subset)
-        test_loader = DataLoader(
-            test_data, batch_size=args.batch_size, shuffle=False, collate_fn=snli_collate_fn)
+        valid_loader = get_dataloader("validation", token_to_idx, args)
+        test_loader = get_dataloader("test", token_to_idx, args)
 
         valid_loss, valid_accuracy = evaluate(model, criterion, valid_loader, args.device)
         test_loss, test_accuracy = evaluate(model, criterion, test_loader, args.device)
@@ -190,7 +170,7 @@ def main(args):
             "usepytorch": args.use_pytorch,
             "kfold": args.kfold,
             "device": args.device,
-            "vocab": vocab,
+            "token_to_idx": token_to_idx,
             "model": model,
         }
         if args.senteval_fast:
@@ -237,6 +217,7 @@ if __name__ == "__main__":
     # Training parameters
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
+    parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for the data loaders")
 
     # SentEval parameters
     parser.add_argument("--senteval", action="store_true",  help="Use the SentEval evaluation metric")

@@ -1,7 +1,4 @@
-"""Simple bidirectional LSTM (BiLSTM).
-
-where the last hidden state of forward and backward layers are concatenated as the sentence representations.
-"""
+"""BiLSTM encoder."""
 
 import torch
 from torch import nn
@@ -43,19 +40,11 @@ class BiLSTMEncoder(nn.Module):
         # Get the word embeddings (batch_size, seq_len, embedding_dim)
         embeddings = self.word_embeddings(indices)
 
-        # Sort the sequences by length in descending order (required for pack_padded_sequence)
-        lengths, sorted_indices = lengths.sort(descending=True)
-
-        # Move sorted_indices to the same device as embeddings
-        sorted_indices = sorted_indices.to(embeddings.device)
-
-        sorted_embeddings = embeddings.index_select(0, sorted_indices)
-
         # Move lengths to CPU
         lengths = lengths.to('cpu')
 
         # Pack the padded sequence
-        packed_embeddings = pack_padded_sequence(sorted_embeddings, lengths, batch_first=True)
+        packed_embeddings = pack_padded_sequence(embeddings, lengths, batch_first=True, enforce_sorted=False)
 
         # Pass the packed embeddings through the LSTM
         packed_lstm_outputs, (hidden_states, _) = self.lstm(packed_embeddings)
@@ -72,9 +61,5 @@ class BiLSTMEncoder(nn.Module):
             backward_hidden = hidden_states[-1]
             sentence_repr = torch.cat((forward_hidden, backward_hidden), dim=1)
 
-        # Undo the sorting by length
-        _, unsorted_indices = sorted_indices.sort()
-        unsorted_representation = sentence_repr.index_select(0, unsorted_indices.to(sentence_repr.device))
-
-        return unsorted_representation
+        return sentence_repr
 

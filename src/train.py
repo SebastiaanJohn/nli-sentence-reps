@@ -2,12 +2,10 @@
 
 import argparse
 import logging
-from functools import partial
 from pathlib import Path
 
 import torch
 import torch.optim as optim
-from datasets import load_dataset
 from eval import evaluate
 from torch import nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -15,7 +13,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
-from data.dataset import build_vocabulary, snli_collate_fn, tokenize
+from data.dataset import build_vocabulary, get_dataloader
 from models.classifiers import Classifier
 from models.net import NLIModel
 from models.utils import get_encoder
@@ -41,7 +39,8 @@ def train_step(
         The loss value for the batch.
     """
     # Unpack the batch
-    premise, hypothesis, premise_lengths, hypothesis_lengths, label = batch
+    (premise, hypothesis, premise_lengths,
+     hypothesis_lengths, label) = batch
 
     # Move the batch to the device
     premise = premise.to(device)
@@ -142,33 +141,18 @@ def train(
 
 def main(args):
     """Main function for training and evaluating the model."""
+    logging.info(f"Args: {args}")
+    logging.info("Starting training...")
+
     # Set the random seed
     torch.manual_seed(args.seed)
 
-    # Load training data and make vocabulary
-    print("Loading training data...")
-    train_dataset = load_dataset("snli", split="train").filter(lambda example: example["label"] != -1)
-    train_dataset = train_dataset.map(tokenize, batched=True, batch_size=1000)
-    token_to_idx, word_embeddings = build_vocabulary(train_dataset)
-    print("Done!")
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        collate_fn=partial(snli_collate_fn, token_to_idx),
-        num_workers=args.num_workers,
-    )
+    # Build vocabulary
+    token_to_idx, word_embeddings = build_vocabulary("train", args.glove_version, args.input_dim)
 
-    # Load validation data
-    valid_dataset = load_dataset("snli", split="validation").filter(lambda example: example["label"] != -1)
-    valid_dataset = valid_dataset.map(tokenize, batched=True, batch_size=1000)
-    valid_loader = DataLoader(
-        valid_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        collate_fn=partial(snli_collate_fn, token_to_idx),
-        num_workers=args.num_workers,
-    )
+    # Create the data loaders
+    train_loader = get_dataloader("train", token_to_idx, args)
+    valid_loader = get_dataloader("validation", token_to_idx, args)
 
     # Set the device
     device = torch.device(args.device)
@@ -221,16 +205,9 @@ def main(args):
     model.load_state_dict(torch.load(f"models/{args.encoder}/best_model.pt"))
 
     logging.info("Evaluating the model on the test data...")
-    # Load the test data
-    test_dataset = load_dataset("snli", split="test").filter(lambda example: example["label"] != -1)
-    test_dataset = test_dataset.map(tokenize, batched=True, batch_size=1000)
-    test_dataloader = DataLoader(
-        test_dataset,
-        batch_size=args.batch_size,
-        shuffle=False,
-        collate_fn=create_snli_collate_fn(token_to_idx),
-        num_workers=args.num_workers,
-    )
+
+    # Create the test data loader
+    test_dataloader = get_dataloader("test", token_to_idx, args)
 
     # Evaluate the model on the test data
     test_loss, test_accuracy = evaluate(model, criterion, test_dataloader, device)
@@ -255,7 +232,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=0.1, help="Learning rate")
     parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
-    parser.add_argument("--num_workers", type=int, default=8, help="Number of workers for the data loaders")
+    parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for the data loaders")
 
     # Environment parameters
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use")

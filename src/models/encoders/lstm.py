@@ -31,14 +31,6 @@ class LSTMEncoder(nn.Module):
         # Get the word embeddings (batch_size, seq_len, embedding_dim)
         embeddings = self.word_embeddings(indices)
 
-        # # Sort the sequences by length in descending order (required for pack_padded_sequence)
-        # lengths, sorted_indices = lengths.sort(descending=True)
-
-        # Move sorted_indices to the same device as embeddings
-        # sorted_indices = sorted_indices.to(embeddings.device)
-
-        # sorted_embeddings = embeddings.index_select(0, sorted_indices)
-
         # Move lengths to CPU
         lengths = lengths.to('cpu')
 
@@ -50,10 +42,6 @@ class LSTMEncoder(nn.Module):
 
         # The last hidden state is the sentence representation
         sentence_representation = hidden_state[-1]
-
-        # # Undo the sorting by length
-        # _, unsorted_indices = sorted_indices.sort()
-        # unsorted_representation = sentence_representation.index_select(0, unsorted_indices.to(sentence_representation.device))
 
         return sentence_representation
 

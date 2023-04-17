@@ -3,7 +3,7 @@ data/snli_1.0
 models/*/*.pt
 /SentEval/
 data/downstream/*/
-
+data/*.pt
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
