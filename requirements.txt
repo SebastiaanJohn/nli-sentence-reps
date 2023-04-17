@@ -8,3 +8,4 @@ tqdm
 tensorboard
 scikit-learn
 jupyter
+datasets

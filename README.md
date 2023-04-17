@@ -6,11 +6,14 @@ This repository contains the code for the paper [Supervised Learning of Universa
 
 The repository is structured as follows:
 
-* `data/` contains the scripts to download the data for the experiments and SentEval.
+* `data/` contains the scripts to download the data for the experiments and SentEval. After training the vocabulary and embeddings are stored here as well.
 * `models/` contains the pre-trained models.
-* `notebooks/` contains the notebooks with the results for the experiments.
-* `runs/` contains the Tensorboard logs.
+* `runs/` contains the Tensorboard logs. The logs are stored in a directory with the name of the model.
 * `src/` contains the source code of the project.
+* `results.ipynb` contains the prediction code, results of the experiments, and discussion.
+* `requirements.txt` contains the requirements for the project.
+* `README.md` contains the instructions for the project.
+* `pyproject.toml` contains the project configuration.
 
 ## Requirements
 
@@ -18,16 +21,10 @@ The code is written in Python 3.10. The requirements can be installed using `pip
 
 ## Datasets
 
-The [The Stanford Natural Language Inference (SNLI)](https://nlp.stanford.edu/projects/snli/) can be downloaded using the following command:
+The [The Stanford Natural Language Inference (SNLI)](https://nlp.stanford.edu/projects/snli/) will be downloaded automatically when running the training script. The [SentEval](https://github.com/facebookresearch/SentEval) datasets can be downloaded using the following command from the `data/downstream` directory:
 
 ```bash
-sh /data/download_dataset.sh
-```
-
-The [SentEval](https://github.com/facebookresearch/SentEval) datasets can be downloaded using the following command:
-
-```bash
-bash data/downstream/get_transfer_data.bash
+bash ./get_transfer_data.bash
 ```
 
 ## Usage
