@@ -2,10 +2,12 @@
 
 import argparse
 import logging
+from functools import partial
 from pathlib import Path
 
 import torch
 import torch.optim as optim
+from datasets import load_dataset
 from eval import evaluate
 from torch import nn
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -13,8 +15,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
-from data.dataset import SNLIDataset
-from data.utils import snli_collate_fn
+from data.dataset import build_vocabulary, snli_collate_fn, tokenize
 from models.classifiers import Classifier
 from models.net import NLIModel
 from models.utils import get_encoder
@@ -141,39 +142,40 @@ def train(
 
 def main(args):
     """Main function for training and evaluating the model."""
-    logging.info(f"Args: {args}")
-
     # Set the random seed
     torch.manual_seed(args.seed)
+
+    # Load training data and make vocabulary
+    print("Loading training data...")
+    train_dataset = load_dataset("snli", split="train").filter(lambda example: example["label"] != -1)
+    train_dataset = train_dataset.map(tokenize, batched=True, batch_size=1000)
+    token_to_idx, word_embeddings = build_vocabulary(train_dataset)
+    print("Done!")
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=partial(snli_collate_fn, token_to_idx),
+        num_workers=args.num_workers,
+    )
+
+    # Load validation data
+    valid_dataset = load_dataset("snli", split="validation").filter(lambda example: example["label"] != -1)
+    valid_dataset = valid_dataset.map(tokenize, batched=True, batch_size=1000)
+    valid_loader = DataLoader(
+        valid_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=partial(snli_collate_fn, token_to_idx),
+        num_workers=args.num_workers,
+    )
 
     # Set the device
     device = torch.device(args.device)
 
-    logging.info("Loading the data...")
-    # Load the training data
-    train_data = SNLIDataset(
-        args.data_path,
-        split="train",
-        glove_version=args.glove_version,
-        subset=args.subset)
-    train_dataloader = DataLoader(
-        train_data, batch_size=args.batch_size, shuffle=True, collate_fn=snli_collate_fn)
-
-    # Get the vocabulary
-    vocab = train_data.vocab
-
-    # Load the validation data
-    valid_data = SNLIDataset(
-        args.data_path,
-        split="dev",
-        vocab=vocab,
-        subset=args.subset)
-    valid_dataloader = DataLoader(
-        valid_data, batch_size=args.batch_size, shuffle=False, collate_fn=snli_collate_fn)
-
     logging.info("Building the model...")
     # Load the sentence encoder and the classifier
-    encoder = get_encoder(vocab.word_embedding, args.encoder)
+    encoder = get_encoder(word_embeddings, args.encoder)
     if args.encoder in {"bilstm", "bilstm-max"}:
         classifier_input_dim = 4096
     elif args.encoder == "lstm":
@@ -204,20 +206,31 @@ def main(args):
 
     logging.info("Starting training...")
     # Train the model
-    train(model, optimizer, scheduler, criterion, train_dataloader, valid_dataloader, args.epochs, device, args)
+    train(
+        model,
+        optimizer,
+        scheduler,
+        criterion,
+        train_loader,
+        valid_loader,
+        args.epochs,
+        device,
+        args)
 
     # Load the best model
     model.load_state_dict(torch.load(f"models/{args.encoder}/best_model.pt"))
 
     logging.info("Evaluating the model on the test data...")
     # Load the test data
-    test_data = SNLIDataset(
-        args.data_path,
-        split="test",
-        vocab=vocab,
-        subset=args.subset)
+    test_dataset = load_dataset("snli", split="test").filter(lambda example: example["label"] != -1)
+    test_dataset = test_dataset.map(tokenize, batched=True, batch_size=1000)
     test_dataloader = DataLoader(
-        test_data, batch_size=args.batch_size, shuffle=False, collate_fn=snli_collate_fn)
+        test_dataset,
+        batch_size=args.batch_size,
+        shuffle=False,
+        collate_fn=create_snli_collate_fn(token_to_idx),
+        num_workers=args.num_workers,
+    )
 
     # Evaluate the model on the test data
     test_loss, test_accuracy = evaluate(model, criterion, test_dataloader, device)
@@ -242,6 +255,7 @@ if __name__ == "__main__":
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size")
     parser.add_argument("--learning_rate", type=float, default=0.1, help="Learning rate")
     parser.add_argument("--epochs", type=int, default=20, help="Number of epochs")
+    parser.add_argument("--num_workers", type=int, default=8, help="Number of workers for the data loaders")
 
     # Environment parameters
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu", help="Device to use")

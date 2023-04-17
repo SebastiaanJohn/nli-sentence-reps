@@ -11,8 +11,6 @@ from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from data.dataset import SNLIDataset
-from data.utils import snli_collate_fn
 from models.classifiers import Classifier
 from models.net import NLIModel
 from models.utils import get_encoder
