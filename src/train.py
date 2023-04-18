@@ -220,9 +220,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # Data parameters
-    parser.add_argument("--data_path", type=str, default="data", help="Path to the data directory")
     parser.add_argument("--glove_version", type=str, default="840B", choices=["6B", "42B", "840B"], help="GloVe version")
-    parser.add_argument("--subset", type=int, default=None, help="Subset of the data to use for training")
 
     # Model parameters
     parser.add_argument("--input_dim", type=int, default=300, help="Input dimension of the word embeddings")

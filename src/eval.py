@@ -177,7 +177,7 @@ def main(args):
             params['classifier'] = {'nhid': 0, 'optim': 'rmsprop', 'batch_size': 128, 'tenacity': 3, 'epoch_size': 2}
 
         se = senteval.engine.SE(params, batcher, None)
-        transfer_tasks = ['MR', 'CR', 'MPQA', 'SUBJ', 'SST2', 'TREC', 'MRPC', 'SICKEntailment', 'SICKRelatedness', 'STS14']
+        transfer_tasks = ['MR', 'CR', 'MPQA', 'SUBJ', 'SST2', 'TREC', 'MRPC', 'SICKEntailment']
         results = se.eval(transfer_tasks)
 
         logging.info(f"Results: {results}")
@@ -209,10 +209,8 @@ if __name__ == "__main__":
     parser.add_argument("--input_dim", type=int, default=300, help="Input dimension of the word embeddings")
 
     # Data parameters
-    parser.add_argument("--data", type=str, default="data", help="Path to the data directory")
     parser.add_argument("--glove_version", type=str, default="840B", choices=["6B", "42B", "840B"],
                         help="GloVe version to use")
-    parser.add_argument("--subset", type=int, default=None,  help="Subset of the data to use for training")
 
     # Training parameters
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
