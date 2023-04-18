@@ -6,8 +6,8 @@ fixable = ["E", "F", "I", "W", "D"]
 # Same as Black.
 line-length = 88
 
-# Assume Python 3.11.
-target-version = "py311"
+# Assume Python 3.10.
+target-version = "py310"
 
 [tool.ruff.pydocstyle]
 convention = "google"
