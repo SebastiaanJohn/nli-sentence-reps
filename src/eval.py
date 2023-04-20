@@ -114,6 +114,7 @@ def batcher(params, batch) -> np.ndarray:
     # Convert the sentence embeddings to a numpy array
     return sentence_embeddings.detach().cpu().numpy()
 
+
 def main(args):
     """Evaluate the model."""
     logging.info(f"Args: {args}")
