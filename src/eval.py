@@ -122,6 +122,8 @@ def main(args):
 
     # Set the random seed
     torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     # Create the vocabulary
     logging.info("Loading the vocabulary...")

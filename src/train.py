@@ -146,6 +146,8 @@ def main(args):
 
     # Set the random seed
     torch.manual_seed(args.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(args.seed)
 
     # Build vocabulary
     token_to_idx, word_embeddings = build_vocabulary("train", args.glove_version, args.input_dim)
