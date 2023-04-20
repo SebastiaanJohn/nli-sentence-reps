@@ -100,8 +100,11 @@ def build_vocabulary(
     # Get unique tokens from the dataset
     unique_tokens = {token for item in dataset for token in item["premise"] + item["hypothesis"]}
 
+    # Sort the unique tokens so that the indices are aligned the same way every time
+    sorted_unique_tokens = sorted(unique_tokens)
+
     # Update the token_to_idx dictionary and aligned_embeddings list
-    for token in unique_tokens:
+    for token in sorted_unique_tokens:
         token_to_idx[token] = len(token_to_idx)
         aligned_embeddings.append(glove[token])
 
