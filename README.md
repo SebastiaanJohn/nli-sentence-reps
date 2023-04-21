@@ -7,6 +7,7 @@ This repository contains the code for the paper [Supervised Learning of Universa
 The repository is structured as follows:
 
 * `data/` contains the scripts to download the data for the experiments and SentEval. After training the vocabulary and embeddings are stored here as well.
+* `logs/` contains the Lisa logs from the training.
 * `models/` contains the pre-trained models.
 * `runs/` contains the Tensorboard logs. The logs are stored in a directory with the name of the model.
 * `src/` contains the source code of the project.
@@ -17,7 +18,7 @@ The repository is structured as follows:
 
 ## Requirements
 
-The code is written in Python 3.10. The requirements can be installed using `pip install -r requirements.txt`.
+The code is written in Python 3.10. The requirements can be installed using `pip install -r requirements.txt` or with the conda environment file `conda env create -f environment.yml`.
 
 ## Datasets
 
